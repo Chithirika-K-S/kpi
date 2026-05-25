@@ -26,11 +26,17 @@ CREATE TABLE IF NOT EXISTS kpis (
   teamwork      TINYINT      NOT NULL DEFAULT 0,   -- out of 5
   discipline    TINYINT      NOT NULL DEFAULT 0,   -- out of 5
   initiative    TINYINT      NOT NULL DEFAULT 0,   -- out of 5
+  status        ENUM('pending','draft','finalized') NOT NULL DEFAULT 'pending',  -- explicit KPI lifecycle status
   created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Migration: add status column to existing kpis table if upgrading from earlier schema
+-- ALTER TABLE kpis ADD COLUMN IF NOT EXISTS status ENUM('pending','draft','finalized') NOT NULL DEFAULT 'pending';
+-- UPDATE kpis SET status = 'finalized' WHERE final_score > 0;
+-- UPDATE kpis SET status = 'draft' WHERE final_score = 0 AND (communication > 0 OR teamwork > 0 OR discipline > 0 OR initiative > 0);
 
 -- ─────────────────────────────────────────────────────────────
 --  Sample seed rows  (passwords are bcrypt of the shown string)

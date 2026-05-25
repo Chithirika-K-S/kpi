@@ -84,7 +84,6 @@ export default function LeadDashboard() {
 
     const matchFilter =
       filter === "all" ? true
-      : filter === "pending" ? (!m.kpi_status || m.kpi_status === "pending")
       : m.kpi_status === filter;
 
     return matchSearch && matchFilter;
