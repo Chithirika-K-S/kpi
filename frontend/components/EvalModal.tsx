@@ -71,16 +71,15 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
 
   const tlTotal = detail?.criteria.reduce((sum: number, c: any) => {
     const raw  = parseFloat(scores[c.id]?.score || "0");
-    const norm = (raw / c.max_score) * c.weight_percent * 0.2;
-    return sum + (isNaN(norm) ? 0 : norm);
-  }, 0) ?? 0;
+    return sum + (isNaN(raw) ? 0 : raw);
+  }, 0) ?? 0;  // raw TL sum, out of 20 (4 criteria × max 5 each)
 
-  const sysTotal     = detail?.criteria.reduce((s: number, c: any) => s + (c.system_normalized ?? 0), 0) ?? 0;
-  const finalPreview = sysTotal + tlTotal;
+  // auto_score is out of 80; show it directly
+  const sysScore     = parseFloat(detail?.autoScore ?? detail?.finalKpi?.auto_score ?? 0);
+  const finalPreview = sysScore + tlTotal;
   const isFinalized  = detail?.finalKpi?.status === "finalized";
   const allFilled    = detail?.criteria.every((c: any) => scores[c.id]?.score !== "");
 
-  /* Score ring colours adapted to light theme */
   const ringColors = { sys: "#2563eb", tl: "#d97706", final: finalPreview >= 80 ? "#059669" : finalPreview >= 60 ? "#d97706" : "#dc2626" };
 
   return (
@@ -111,12 +110,12 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
             {/* Score preview cards */}
             <div className="grid grid-cols-3 gap-4">
               {[
-                { label: "System (80%)",  score: Math.min(sysTotal, 100),      color: ringColors.sys   },
-                { label: "TL Score (20%)", score: Math.min(tlTotal * 5, 100),  color: ringColors.tl    },
-                { label: "Final KPI",     score: Math.min(finalPreview, 100),   color: ringColors.final },
+                { label: "System (80%)",   score: Math.min((sysScore / 80) * 100, 100),  display: Math.round(sysScore),   color: ringColors.sys   },
+                { label: "TL Score (20%)", score: Math.min((tlTotal / 20) * 100, 100),   display: Math.round(tlTotal),    color: ringColors.tl    },
+                { label: "Final KPI",      score: Math.min(finalPreview, 100),            display: Math.round(finalPreview), color: ringColors.final },
               ].map((s) => (
                 <div key={s.label} className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
-                  <ScoreRing score={s.score} size={72} color={s.color} />
+                  <ScoreRing score={s.score} size={72} color={s.color} label={String(s.display)} />
                   <p className="text-xs text-slate-400 mt-2 font-medium">{s.label}</p>
                 </div>
               ))}
@@ -125,7 +124,7 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
             {isFinalized && (
               <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-emerald-700 text-sm font-medium">
                 <CheckCircle size={15} />
-                KPI finalized on {new Date(detail.finalKpi.finalized_at).toLocaleDateString()}
+                KPI finalized{detail.finalKpi.finalized_at ? ` on ${new Date(detail.finalKpi.finalized_at).toLocaleDateString()}` : ""}
               </div>
             )}
 

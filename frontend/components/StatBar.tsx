@@ -8,7 +8,7 @@ export default function StatBar({ members }: Props) {
   const total     = members.length;
   const finalized = members.filter((m) => m.kpi_status === "finalized").length;
   const draft     = members.filter((m) => m.kpi_status === "draft").length;
-  const pending   = members.filter((m) => !m.kpi_status || m.kpi_status === "pending").length;
+  const pending   = members.filter((m) => m.kpi_status === "pending").length;
   const scores    = members.filter((m) => m.final_score != null);
   const avg       = scores.length
     ? scores.reduce((s, m) => s + parseFloat(m.final_score), 0) / scores.length
