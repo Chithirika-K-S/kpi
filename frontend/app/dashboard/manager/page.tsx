@@ -267,6 +267,8 @@ function EvalModal({ lead, onClose, onSaved }: EvalModalProps) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
         </div>
 
+    
+
         <div className="space-y-4">
           <div className="bg-slate-50 rounded-xl p-4 space-y-3">
             <MetricRow label="Communication" value={communication} max={5} onChange={setCommunication} />
