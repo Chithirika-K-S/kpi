@@ -83,8 +83,8 @@ export const api = {
   getManagerStats: () =>
     apiFetch<ManagerStats>('/api/manager/stats'),
 
-  getManagerMonthly: () =>
-    apiFetch<{ monthly: MonthlyKpi[] }>('/api/manager/analytics/monthly'),
+  getManagerMonthly: (teamId: string | number = 'all') =>
+    apiFetch<{ monthly: MonthlyKpi[] }>(`/api/manager/analytics/monthly?teamId=${teamId}`),
 
   getManagerTeamAnalytics: () =>
     apiFetch<{ teams: TeamKpi[] }>('/api/manager/analytics/teams'),

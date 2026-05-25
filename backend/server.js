@@ -399,23 +399,43 @@ app.get('/api/manager/stats', verifyToken, requireManager, async (req, res) => {
   }
 });
 
-// GET /api/manager/analytics/monthly  – last 12 months avg KPI (org-wide)
+// GET /api/manager/analytics/monthly
+// ?teamId=all|1|2  →  org-wide avg OR single team from kpi_monthly_trends
 app.get('/api/manager/analytics/monthly', verifyToken, requireManager, async (req, res) => {
+  const { teamId } = req.query;
+
   try {
-    const rows = await query(`
-      SELECT
-        DATE_FORMAT(k.updated_at, '%b %Y') AS month_label,
-        DATE_FORMAT(k.updated_at, '%Y-%m') AS month_key,
-        ROUND(AVG(k.final_score), 1)       AS avg_score,
-        COUNT(*)                           AS count
-      FROM kpis k
-      WHERE k.final_score > 0
-        AND k.updated_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-      GROUP BY month_key, month_label
-      ORDER BY month_key ASC
-    `);
+    let rows;
+
+    if (!teamId || teamId === 'all') {
+      // Org-wide: average both teams per month, fetch all 12 synthetic rows
+      rows = await query(`
+        SELECT
+          DATE_FORMAT(kmt.month, '%b %Y')   AS month_label,
+          DATE_FORMAT(kmt.month, '%Y-%m')   AS month_key,
+          ROUND(AVG(kmt.avg_score), 1)      AS avg_score
+        FROM kpi_monthly_trends kmt
+        GROUP BY month_key, month_label
+        ORDER BY month_key ASC
+        LIMIT 12
+      `);
+    } else {
+      // Single team — return its 12 rows ordered oldest → newest
+      rows = await query(`
+        SELECT
+          DATE_FORMAT(month, '%b %Y')   AS month_label,
+          DATE_FORMAT(month, '%Y-%m')   AS month_key,
+          ROUND(avg_score, 1)           AS avg_score
+        FROM kpi_monthly_trends
+        WHERE team_id = ?
+        ORDER BY month ASC
+        LIMIT 12
+      `, [teamId]);
+    }
+
     res.json({ monthly: rows });
   } catch (err) {
+    console.error('monthly trend error:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -425,15 +445,15 @@ app.get('/api/manager/analytics/teams', verifyToken, requireManager, async (req,
   try {
     const rows = await query(`
       SELECT
-        t.id              AS team_id,
-        t.team_name,
+        t.id                         AS team_id,
+        t.name                       AS team_name,
         ROUND(AVG(k.final_score), 1) AS avg_score,
-        COUNT(u.id)       AS member_count,
+        COUNT(u.id)                  AS member_count,
         SUM(CASE WHEN k.final_score > 0 THEN 1 ELSE 0 END) AS finalized
       FROM teams t
-      LEFT JOIN users u  ON u.team_id = t.id AND u.role = 'Team Member'
-      LEFT JOIN kpis  k  ON k.user_id = u.id
-      GROUP BY t.id, t.team_name
+      LEFT JOIN users u ON u.team_id = t.id AND u.role = 'Team Member'
+      LEFT JOIN kpis  k ON k.user_id = u.id
+      GROUP BY t.id, t.name
       ORDER BY avg_score DESC
     `);
     res.json({ teams: rows });
@@ -448,16 +468,12 @@ app.get('/api/manager/employees', verifyToken, requireManager, async (req, res) 
     const rows = await query(`
       SELECT
         u.id, u.name, u.email, u.role, u.team_id,
-        t.team_name,
-        tl.name        AS team_lead_name,
+        t.name          AS team_name,
+        tl.name         AS team_lead_name,
         k.auto_score, k.final_score,
         k.communication, k.teamwork, k.discipline, k.initiative,
-        (k.communication + k.teamwork + k.discipline + k.initiative) AS lead_score,
-        CASE
-          WHEN k.final_score > 0 THEN 'Finalized'
-          WHEN k.communication IS NOT NULL THEN 'Draft'
-          ELSE 'Pending'
-        END AS kpi_status
+        k.lead_score,
+        k.status        AS kpi_status
       FROM users u
       LEFT JOIN teams t   ON t.id = u.team_id
       LEFT JOIN users tl  ON tl.id = t.lead_id
@@ -477,25 +493,21 @@ app.get('/api/manager/teamleads', verifyToken, requireManager, async (req, res) 
     const rows = await query(`
       SELECT
         u.id, u.name, u.email,
-        t.id   AS team_id,
-        t.team_name,
-        COUNT(m.id) AS member_count,
+        t.id            AS team_id,
+        t.name          AS team_name,
+        COUNT(m.id)     AS member_count,
         k.auto_score, k.final_score,
         k.communication, k.teamwork, k.discipline, k.initiative,
-        (k.communication + k.teamwork + k.discipline + k.initiative) AS lead_score,
-        CASE
-          WHEN k.final_score > 0 THEN 'Finalized'
-          WHEN k.communication IS NOT NULL THEN 'Draft'
-          ELSE 'Pending'
-        END AS kpi_status
+        k.lead_score,
+        k.status        AS kpi_status
       FROM users u
       LEFT JOIN teams t   ON t.lead_id = u.id
       LEFT JOIN users m   ON m.team_id = t.id AND m.role = 'Team Member'
       LEFT JOIN kpis  k   ON k.user_id = u.id
       WHERE u.role = 'Team Lead'
-      GROUP BY u.id, u.name, u.email, t.id, t.team_name,
+      GROUP BY u.id, u.name, u.email, t.id, t.name,
                k.auto_score, k.final_score, k.communication,
-               k.teamwork, k.discipline, k.initiative
+               k.teamwork, k.discipline, k.initiative, k.lead_score, k.status
       ORDER BY u.name ASC
     `);
     res.json({ teamLeads: rows });
@@ -509,30 +521,28 @@ app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res
   const { userId, autoScore, communication, teamwork, discipline, initiative, overrideReason } = req.body;
   if (!userId) return res.status(400).json({ message: 'userId is required' });
 
-  const comm  = communication ?? 0;
-  const team  = teamwork      ?? 0;
-  const disc  = discipline    ?? 0;
-  const init  = initiative    ?? 0;
-  const auto  = autoScore     ?? 0;
-  const lead  = comm + team + disc + init;
-  const final = parseFloat(auto) + lead;
+  const comm = communication ?? 0;
+  const team = teamwork      ?? 0;
+  const disc = discipline    ?? 0;
+  const init = initiative    ?? 0;
+  const auto = autoScore     ?? 0;
 
   try {
     const existing = await query('SELECT id FROM kpis WHERE user_id = ?', [userId]);
     if (existing.length === 0) {
       await query(
-        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, lead_score, final_score)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, auto, comm, team, disc, init, lead, final]
+        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [userId, auto, comm, team, disc, init]
       );
     } else {
       await query(
         `UPDATE kpis SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
-         lead_score=?, final_score=?, updated_at=NOW() WHERE user_id=?`,
-        [auto, comm, team, disc, init, lead, final, userId]
+         updated_at=NOW() WHERE user_id=?`,
+        [auto, comm, team, disc, init, userId]
       );
     }
-    // Log override notification if reason given
+    // Notify Team Lead if override reason supplied
     if (overrideReason) {
       const userRows = await query('SELECT team_id FROM users WHERE id=?', [userId]);
       const teamId   = userRows[0]?.team_id;
@@ -547,7 +557,9 @@ app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res
         }
       }
     }
-    res.json({ message: 'KPI saved.', finalScore: final });
+    // Return the generated final_score so the UI can show it
+    const updated = await query('SELECT final_score FROM kpis WHERE user_id=?', [userId]);
+    res.json({ message: 'KPI saved.', finalScore: updated[0]?.final_score ?? 0 });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -558,27 +570,24 @@ app.post('/api/manager/teamlead/evaluate', verifyToken, requireManager, async (r
   const { teamLeadId, communication, teamwork, discipline, initiative } = req.body;
   if (!teamLeadId) return res.status(400).json({ message: 'teamLeadId is required' });
 
-  const comm  = communication ?? 0;
-  const team  = teamwork      ?? 0;
-  const disc  = discipline    ?? 0;
-  const init  = initiative    ?? 0;
-  const lead  = comm + team + disc + init;
+  const comm = communication ?? 0;
+  const team = teamwork      ?? 0;
+  const disc = discipline    ?? 0;
+  const init = initiative    ?? 0;
 
   try {
-    const existing = await query('SELECT id, auto_score FROM kpis WHERE user_id=?', [teamLeadId]);
+    const existing = await query('SELECT id FROM kpis WHERE user_id=?', [teamLeadId]);
     if (existing.length === 0) {
       await query(
-        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, lead_score, final_score)
-         VALUES (?, 0, ?, ?, ?, ?, ?, ?)`,
-        [teamLeadId, comm, team, disc, init, lead, lead]
+        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative)
+         VALUES (?, 0, ?, ?, ?, ?)`,
+        [teamLeadId, comm, team, disc, init]
       );
     } else {
-      const autoScore = existing[0].auto_score ?? 0;
-      const final     = parseFloat(autoScore) + lead;
       await query(
         `UPDATE kpis SET communication=?, teamwork=?, discipline=?, initiative=?,
-         lead_score=?, final_score=?, updated_at=NOW() WHERE user_id=?`,
-        [comm, team, disc, init, lead, final, teamLeadId]
+         updated_at=NOW() WHERE user_id=?`,
+        [comm, team, disc, init, teamLeadId]
       );
     }
     res.json({ message: 'Team Lead evaluated.' });
@@ -591,12 +600,12 @@ app.post('/api/manager/teamlead/evaluate', verifyToken, requireManager, async (r
 app.get('/api/manager/teams', verifyToken, requireManager, async (req, res) => {
   try {
     const rows = await query(`
-      SELECT t.id, t.team_name, u.name AS lead_name, COUNT(m.id) AS member_count
+      SELECT t.id, t.name AS team_name, u.name AS lead_name, COUNT(m.id) AS member_count
       FROM teams t
       LEFT JOIN users u ON u.id = t.lead_id
       LEFT JOIN users m ON m.team_id = t.id AND m.role = 'Team Member'
-      GROUP BY t.id, t.team_name, u.name
-      ORDER BY t.team_name ASC
+      GROUP BY t.id, t.name, u.name
+      ORDER BY t.name ASC
     `);
     res.json({ teams: rows });
   } catch (err) {

@@ -12,31 +12,76 @@ type Tab = 'analytics' | 'employees' | 'teamleads';
 type StatusFilter = 'All' | 'Finalized' | 'Draft' | 'Pending';
 
 // ─── Tiny inline bar chart (pure SVG, no deps) ────────────────────
-function BarChart({ data, teamFilter }: { data: MonthlyKpi[]; teamFilter: string }) {
-  const max = Math.max(...data.map(d => d.avg_score), 1);
+function BarChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
+  const max = Math.max(...data.map(d => Number(d.avg_score)), 1);
   return (
-    <div className="flex items-end gap-1.5 h-40 w-full">
-      {data.map((d, i) => {
-        const pct = (d.avg_score / max) * 100;
-        return (
-          <div key={i} className="flex-1 flex flex-col items-center gap-1 group relative">
-            <div
-              className="w-full rounded-t-md bg-indigo-500 hover:bg-indigo-400 transition-all cursor-default"
-              style={{ height: `${pct}%`, minHeight: 4 }}
-            />
-            <span className="text-[9px] text-slate-400 -rotate-45 origin-left mt-1 whitespace-nowrap">
-              {d.month_label}
-            </span>
-            {/* Tooltip */}
-            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded pointer-events-none opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-10">
-              {d.avg_score}/100
-            </div>
+    <div className="w-full">
+      {/* Y-axis labels + bars */}
+      <div className="flex gap-2">
+        {/* Y-axis */}
+        <div className="flex flex-col justify-between text-[9px] text-slate-400 pr-1 pb-6" style={{ height: 160 }}>
+          <span>100</span>
+          <span>75</span>
+          <span>50</span>
+          <span>25</span>
+          <span>0</span>
+        </div>
+        {/* Bars */}
+        <div className="flex-1 flex flex-col gap-1">
+          {/* Grid lines */}
+          <div className="relative flex items-end gap-1.5" style={{ height: 140 }}>
+            {[100, 75, 50, 25].map(v => (
+              <div
+                key={v}
+                className="absolute w-full border-t border-dashed border-slate-100"
+                style={{ bottom: `${v}%` }}
+              />
+            ))}
+            {data.map((d, i) => {
+              const pct = (Number(d.avg_score) / 100) * 100;
+              return (
+                <div key={i} className="flex-1 flex flex-col justify-end items-center group relative h-full">
+                  {/* Hover tooltip */}
+                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-10 shadow-lg">
+                    {d.avg_score}/100
+                  </div>
+                  <div
+                    className="w-full rounded-t-md transition-all duration-500 cursor-default"
+                    style={{
+                      height    : `${pct}%`,
+                      minHeight : 4,
+                      background: `linear-gradient(to top, #6d28d9, #818cf8)`,
+                    }}
+                  />
+                </div>
+              );
+            })}
+            {data.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <p className="text-slate-400 text-sm">No data available yet.</p>
+              </div>
+            )}
           </div>
-        );
-      })}
-      {data.length === 0 && (
-        <p className="text-slate-400 text-sm m-auto">No finalized KPI data yet.</p>
-      )}
+          {/* X-axis labels */}
+          <div className="flex gap-1.5">
+            {data.map((d, i) => (
+              <div key={i} className="flex-1 text-center">
+                <span className="text-[8px] text-slate-400 block leading-tight">
+                  {d.month_label.split(' ')[0]}
+                </span>
+                <span className="text-[7px] text-slate-300 block">
+                  {d.month_label.split(' ')[1]}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {/* Legend */}
+      <div className="flex items-center gap-2 mt-3">
+        <div className="w-3 h-3 rounded-sm" style={{ background: 'linear-gradient(to top, #6d28d9, #818cf8)' }} />
+        <span className="text-xs text-slate-500">{label}</span>
+      </div>
     </div>
   );
 }
@@ -99,27 +144,28 @@ function MetricRow({
 }
 
 // ─────────────────────────────────────────────────────────────────
-// KPI Assign / Override Modal
+// KPI Modal  (Evaluate KPI = Pending/Draft  |  Edit KPI = Finalized)
 // ─────────────────────────────────────────────────────────────────
 interface KpiModalProps {
   person: EmployeeRow | TeamLeadRow;
-  mode: 'assign' | 'edit' | 'override';
+  mode: 'evaluate' | 'edit';       // evaluate = pending/draft, edit = finalized
   onClose: () => void;
   onSaved: () => void;
 }
 
 function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
-  const [autoScore,    setAutoScore]    = useState(person.auto_score      ?? 0);
-  const [communication,setCommunication]= useState(person.communication  ?? 0);
-  const [teamwork,     setTeamwork]     = useState(person.teamwork        ?? 0);
-  const [discipline,   setDiscipline]   = useState(person.discipline      ?? 0);
-  const [initiative,   setInitiative]   = useState(person.initiative      ?? 0);
-  const [reason,       setReason]       = useState('');
-  const [saving,       setSaving]       = useState(false);
-  const [err,          setErr]          = useState('');
+  // Parse everything as integers upfront to avoid float arithmetic issues
+  const [autoScore,     setAutoScore]     = useState(Math.round(Number(person.auto_score)      ?? 0));
+  const [communication, setCommunication] = useState(Math.round(Number(person.communication)  ?? 0));
+  const [teamwork,      setTeamwork]      = useState(Math.round(Number(person.teamwork)        ?? 0));
+  const [discipline,    setDiscipline]    = useState(Math.round(Number(person.discipline)      ?? 0));
+  const [initiative,    setInitiative]    = useState(Math.round(Number(person.initiative)      ?? 0));
+  const [saving,        setSaving]        = useState(false);
+  const [err,           setErr]           = useState('');
 
-  const leadScore  = communication + teamwork + discipline + initiative;
-  const finalScore = Math.min(autoScore + leadScore, 100);
+  // Integer arithmetic only – no floating point surprises
+  const leadScore  = communication + teamwork + discipline + initiative;  // 0–20
+  const finalScore = Math.min(autoScore + leadScore, 100);                // 0–100
 
   const handleSave = async () => {
     setSaving(true); setErr('');
@@ -131,7 +177,6 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
         teamwork,
         discipline,
         initiative,
-        overrideReason: mode === 'override' ? reason : undefined,
       });
       onSaved();
       onClose();
@@ -142,79 +187,78 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
     }
   };
 
-  const modeLabel = mode === 'assign' ? 'Assign KPI' : mode === 'edit' ? 'Edit KPI' : 'Override KPI';
-  const modeColor = mode === 'override' ? 'text-rose-600' : 'text-indigo-700';
+  const title     = mode === 'evaluate' ? 'Evaluate KPI' : 'Edit KPI';
+  const btnColor  = 'bg-indigo-600 hover:bg-indigo-700';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h3 className={`text-lg font-bold ${modeColor}`}>{modeLabel}</h3>
+            <h3 className="text-lg font-bold text-indigo-700">{title}</h3>
             <p className="text-sm text-slate-500">{person.name}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
         </div>
 
         <div className="space-y-5">
-          {/* Auto score */}
+
+          {/* System score (out of 80) */}
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">System Score (out of 80)</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">System Score (out of 80)</p>
             <div className="flex items-center gap-4">
               <input
-                type="number" min={0} max={80} value={autoScore}
-                onChange={e => setAutoScore(Math.min(80, Math.max(0, Number(e.target.value))))}
+                type="number" min={0} max={80}
+                value={autoScore}
+                onChange={e => setAutoScore(Math.min(80, Math.max(0, Math.round(Number(e.target.value)))))}
                 className="w-24 border border-slate-200 rounded-lg px-3 py-2 text-sm text-center font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
               <span className="text-sm text-slate-400">/ 80</span>
               <div className="flex-1 bg-slate-100 rounded-full h-2">
-                <div className="h-full bg-indigo-400 rounded-full" style={{ width: `${(autoScore / 80) * 100}%` }} />
+                <div className="h-full bg-indigo-400 rounded-full transition-all" style={{ width: `${(autoScore / 80) * 100}%` }} />
               </div>
             </div>
           </div>
 
-          {/* Manual metrics */}
+          {/* Manual metrics (out of 20 total) */}
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase mb-3">Manual Evaluation (out of 20)</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+              Manual Evaluation — <span className="text-indigo-600">{leadScore}/20</span>
+            </p>
             <div className="space-y-3 bg-slate-50 rounded-xl p-4">
-              <MetricRow label="Communication" value={communication} max={5} onChange={setCommunication} />
-              <MetricRow label="Teamwork"      value={teamwork}      max={5} onChange={setTeamwork}      />
-              <MetricRow label="Discipline"    value={discipline}    max={5} onChange={setDiscipline}    />
-              <MetricRow label="Initiative"    value={initiative}    max={5} onChange={setInitiative}    />
+              <MetricRow label="Communication" value={communication} max={5} onChange={v => setCommunication(Math.round(v))} />
+              <MetricRow label="Teamwork"      value={teamwork}      max={5} onChange={v => setTeamwork(Math.round(v))}      />
+              <MetricRow label="Discipline"    value={discipline}    max={5} onChange={v => setDiscipline(Math.round(v))}    />
+              <MetricRow label="Initiative"    value={initiative}    max={5} onChange={v => setInitiative(Math.round(v))}    />
             </div>
           </div>
 
-          {/* Final preview */}
+          {/* Live final score preview */}
           <div className="flex items-center justify-between bg-indigo-50 rounded-xl px-4 py-3">
-            <span className="text-sm text-slate-600">Calculated Final KPI</span>
-            <span className="text-2xl font-extrabold text-indigo-700">{finalScore}<span className="text-sm font-normal text-slate-500">/100</span></span>
-          </div>
-
-          {/* Override reason */}
-          {mode === 'override' && (
             <div>
-              <label className="text-xs font-semibold text-rose-600 uppercase">Override Reason *</label>
-              <textarea
-                value={reason} onChange={e => setReason(e.target.value)}
-                rows={2}
-                placeholder="Required — this will notify the Team Lead"
-                className="mt-1 w-full border border-rose-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-rose-200"
-              />
+              <p className="text-sm text-slate-600">Calculated Final KPI</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">{autoScore} (system) + {leadScore} (manual)</p>
             </div>
-          )}
+            <span className="text-2xl font-extrabold text-indigo-700">
+              {finalScore}<span className="text-sm font-normal text-slate-400">/100</span>
+            </span>
+          </div>
 
           {err && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
 
           <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition">
+            <button
+              onClick={onClose}
+              className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition"
+            >
               Cancel
             </button>
             <button
               onClick={handleSave}
-              disabled={saving || (mode === 'override' && !reason.trim())}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50 ${
-                mode === 'override' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'
-              }`}
+              disabled={saving}
+              className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50 ${btnColor}`}
             >
               {saving ? 'Saving…' : 'Save KPI'}
             </button>
@@ -310,23 +354,26 @@ export default function ManagerDashboard() {
   const [tab,      setTab]      = useState<Tab>('analytics');
 
   // ── data ──────────────────────────────────────────
-  const [stats,       setStats]       = useState<ManagerStats | null>(null);
-  const [monthly,     setMonthly]     = useState<MonthlyKpi[]>([]);
-  const [teamKpis,    setTeamKpis]    = useState<TeamKpi[]>([]);
-  const [employees,   setEmployees]   = useState<EmployeeRow[]>([]);
-  const [teamLeads,   setTeamLeads]   = useState<TeamLeadRow[]>([]);
-  const [teams,       setTeams]       = useState<TeamOption[]>([]);
+  const [stats,     setStats]     = useState<ManagerStats | null>(null);
+  const [teamKpis,  setTeamKpis]  = useState<TeamKpi[]>([]);
+  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  const [teamLeads, setTeamLeads] = useState<TeamLeadRow[]>([]);
+  const [teams,     setTeams]     = useState<TeamOption[]>([]);
 
   // ── filters ───────────────────────────────────────
-  const [empSearch,   setEmpSearch]   = useState('');
-  const [empTeam,     setEmpTeam]     = useState('All');
-  const [empStatus,   setEmpStatus]   = useState<StatusFilter>('All');
-  const [tlSearch,    setTlSearch]    = useState('');
-  const [tlStatus,    setTlStatus]    = useState<StatusFilter>('All');
-  const [chartTeam,   setChartTeam]   = useState('All');
+  const [empSearch,     setEmpSearch]     = useState('');
+  const [empTeam,       setEmpTeam]       = useState('All');
+  const [empStatus,     setEmpStatus]     = useState<StatusFilter>('All');
+  const [tlSearch,      setTlSearch]      = useState('');
+  const [tlStatus,      setTlStatus]      = useState<StatusFilter>('All');
+
+  // chart filter: 'all' | team_id as string
+  const [chartFilter,   setChartFilter]   = useState<string>('all');
+  const [chartLoading,  setChartLoading]  = useState(false);
+  const [chartData,     setChartData]     = useState<MonthlyKpi[]>([]);
 
   // ── modals ────────────────────────────────────────
-  const [kpiModal,  setKpiModal]  = useState<{ person: EmployeeRow | TeamLeadRow; mode: 'assign'|'edit'|'override' } | null>(null);
+  const [kpiModal,  setKpiModal]  = useState<{ person: EmployeeRow | TeamLeadRow; mode: 'evaluate' | 'edit' } | null>(null);
   const [evalModal, setEvalModal] = useState<TeamLeadRow | null>(null);
   const [dataVersion, setDataVersion] = useState(0);
   const refresh = () => setDataVersion(v => v + 1);
@@ -353,22 +400,32 @@ export default function ManagerDashboard() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const [s, m, t, e, tl, teams] = await Promise.allSettled([
+      const [s, t, e, tl, teams] = await Promise.allSettled([
         api.getManagerStats(),
-        api.getManagerMonthly(),
         api.getManagerTeamAnalytics(),
         api.getManagerEmployees(),
         api.getManagerTeamLeads(),
         api.getManagerTeams(),
       ]);
-      if (s.status  === 'fulfilled') setStats(s.value);
-      if (m.status  === 'fulfilled') setMonthly(m.value.monthly);
-      if (t.status  === 'fulfilled') setTeamKpis(t.value.teams);
-      if (e.status  === 'fulfilled') setEmployees(e.value.employees);
-      if (tl.status === 'fulfilled') setTeamLeads(tl.value.teamLeads);
+      if (s.status     === 'fulfilled') setStats(s.value);
+      if (t.status     === 'fulfilled') setTeamKpis(t.value.teams);
+      if (e.status     === 'fulfilled') setEmployees(e.value.employees);
+      if (tl.status    === 'fulfilled') setTeamLeads(tl.value.teamLeads);
       if (teams.status === 'fulfilled') setTeams(teams.value.teams);
     })();
   }, [user, dataVersion]);
+
+  // ── Fetch chart data whenever filter changes or user loads ──
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setChartLoading(true);
+    api.getManagerMonthly(chartFilter)
+      .then(res => { if (!cancelled) setChartData(res.monthly); })
+      .catch(() => { if (!cancelled) setChartData([]); })
+      .finally(() => { if (!cancelled) setChartLoading(false); });
+    return () => { cancelled = true; };
+  }, [user, chartFilter]);
 
   // ── Filtered lists ────────────────────────────────
   const filteredEmployees = useMemo(() => employees.filter(e => {
@@ -386,15 +443,10 @@ export default function ManagerDashboard() {
     return matchSearch && matchStatus;
   }), [teamLeads, tlSearch, tlStatus]);
 
-  const chartMonthly = useMemo(() => {
-    // For now monthly is org-wide; team filtering on team chart
-    return monthly;
-  }, [monthly, chartTeam]);
-
   const filteredTeamKpis = useMemo(() => {
-    if (chartTeam === 'All') return teamKpis;
-    return teamKpis.filter(t => t.team_name === chartTeam);
-  }, [teamKpis, chartTeam]);
+    if (chartFilter === 'all') return teamKpis;
+    return teamKpis.filter(t => String(t.team_id) === chartFilter);
+  }, [teamKpis, chartFilter]);
 
   const logout = () => {
     localStorage.removeItem('token');
@@ -495,32 +547,104 @@ export default function ManagerDashboard() {
         {tab === 'analytics' && (
           <section className="space-y-5">
 
-            {/* Team filter */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <span className="text-xs font-semibold text-slate-500 uppercase">Filter by Team:</span>
-              {['All', ...teams.map(t => t.team_name)].map(name => (
-                <button
-                  key={name}
-                  onClick={() => setChartTeam(name)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
-                    chartTeam === name
-                      ? 'bg-violet-600 text-white border-violet-600'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300'
-                  }`}
-                >
-                  {name}
-                </button>
-              ))}
+            {/* Monthly trend card */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+
+              {/* Card header with filter pills */}
+              <div className="px-6 pt-5 pb-4 border-b border-slate-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-800">Monthly KPI Trend</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Average KPI score over the last 12 months</p>
+                  </div>
+                  {/* Filter pills */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Organisation-wide pill */}
+                    <button
+                      onClick={() => setChartFilter('all')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                        chartFilter === 'all'
+                          ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-600'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-current opacity-70" />
+                      Organisation
+                    </button>
+                    {/* One pill per team */}
+                    {teams.map((t, idx) => {
+                      const colors = [
+                        { active: 'bg-indigo-600 text-white border-indigo-600', dot: 'bg-white' },
+                        { active: 'bg-emerald-600 text-white border-emerald-600', dot: 'bg-white' },
+                      ];
+                      const c = colors[idx % colors.length];
+                      const isActive = chartFilter === String(t.id);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => setChartFilter(String(t.id))}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                            isActive
+                              ? `${c.active} shadow-sm`
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600'
+                          }`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${isActive ? c.dot : 'bg-slate-400'}`} />
+                          {t.team_name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Chart body */}
+              <div className="px-6 py-5">
+                {chartLoading ? (
+                  <div className="flex items-center justify-center" style={{ height: 180 }}>
+                    <div className="w-7 h-7 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <BarChart
+                    data={chartData}
+                    label={
+                      chartFilter === 'all'
+                        ? 'Organisation-wide average'
+                        : `${teams.find(t => String(t.id) === chartFilter)?.team_name ?? 'Team'} average`
+                    }
+                  />
+                )}
+              </div>
+
+              {/* Footer stats row */}
+              {!chartLoading && chartData.length > 0 && (() => {
+                const scores = chartData.map(d => Number(d.avg_score));
+                const peak   = Math.max(...scores);
+                const low    = Math.min(...scores);
+                const latest = scores[scores.length - 1];
+                const prev   = scores[scores.length - 2] ?? latest;
+                const trend  = latest >= prev ? '↑' : '↓';
+                const trendColor = latest >= prev ? 'text-emerald-600' : 'text-rose-500';
+                return (
+                  <div className="grid grid-cols-3 border-t border-slate-100">
+                    {[
+                      { label: 'Latest Month', value: `${latest}`, unit: '/100' },
+                      { label: 'Peak Score',   value: `${peak}`,   unit: '/100' },
+                      { label: 'Trend',        value: trend,       unit: latest >= prev ? 'Improving' : 'Declining', special: trendColor },
+                    ].map(s => (
+                      <div key={s.label} className="flex flex-col items-center py-4 gap-0.5">
+                        <span className={`text-xl font-extrabold ${s.special ?? 'text-slate-800'}`}>{s.value}</span>
+                        <span className="text-[10px] text-slate-400">{s.label}</span>
+                        <span className="text-[10px] text-slate-300">{s.unit}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
+            {/* Team comparison + org distribution in a row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-              {/* Monthly trend */}
-              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800 mb-1">Monthly KPI Trend</h3>
-                <p className="text-xs text-slate-400 mb-4">Organisation-wide average over last 12 months</p>
-                <BarChart data={chartMonthly} teamFilter={chartTeam} />
-              </div>
 
               {/* Team breakdown */}
               <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
@@ -529,25 +653,34 @@ export default function ManagerDashboard() {
                 <TeamChart data={filteredTeamKpis} />
               </div>
 
-            </div>
-
-            {/* Distribution tiles */}
-            <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-              <h3 className="text-base font-semibold text-slate-800 mb-4">Organisation Performance</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {[
-                  { label: 'High Performers (80+)',  count: employees.filter(e => e.final_score >= 80).length, color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
-                  { label: 'Average (50–79)',         count: employees.filter(e => e.final_score >= 50 && e.final_score < 80).length, color: 'bg-amber-50 border-amber-200 text-amber-700' },
-                  { label: 'Below Target (<50)',      count: employees.filter(e => e.final_score > 0 && e.final_score < 50).length, color: 'bg-rose-50 border-rose-200 text-rose-700' },
-                ].map(d => (
-                  <div key={d.label} className={`${d.color} border rounded-xl p-4`}>
-                    <p className="text-2xl font-extrabold">{d.count}</p>
-                    <p className="text-xs mt-0.5">{d.label}</p>
-                  </div>
-                ))}
+              {/* Distribution tiles */}
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800 mb-4">Organisation Performance</h3>
+                <div className="space-y-3">
+                  {[
+                    { label: 'High Performers (80+)',  count: employees.filter(e => e.final_score >= 80).length,                                     color: 'bg-emerald-500' },
+                    { label: 'Average (50–79)',         count: employees.filter(e => e.final_score >= 50 && e.final_score < 80).length,              color: 'bg-amber-400'  },
+                    { label: 'Below Target (<50)',      count: employees.filter(e => Number(e.final_score) > 0 && e.final_score < 50).length,        color: 'bg-rose-500'   },
+                    { label: 'Not Yet Assigned',        count: employees.filter(e => !e.final_score || Number(e.final_score) === 0).length,           color: 'bg-slate-300'  },
+                  ].map(d => {
+                    const total = employees.length || 1;
+                    const pct   = Math.round((d.count / total) * 100);
+                    return (
+                      <div key={d.label}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-slate-600">{d.label}</span>
+                          <span className="text-xs font-bold text-slate-700">{d.count} <span className="text-slate-400 font-normal">({pct}%)</span></span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2">
+                          <div className={`h-full ${d.color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
 
+            </div>
           </section>
         )}
 
@@ -618,17 +751,15 @@ export default function ManagerDashboard() {
                         <span className="font-bold text-indigo-700">{emp.final_score ?? 0}</span>
                       </td>
                       <td className="px-4 py-3 text-center"><StatusBadge status={emp.kpi_status} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-1">
-                          <ActionBtn
-                            label={emp.kpi_status === 'Pending' ? 'Assign' : 'Edit'}
-                            color={emp.kpi_status === 'Pending' ? 'indigo' : 'slate'}
-                            onClick={() => setKpiModal({ person: emp, mode: emp.kpi_status === 'Pending' ? 'assign' : 'edit' })}
-                          />
-                          {emp.kpi_status !== 'Pending' && (
-                            <ActionBtn label="Override" color="rose" onClick={() => setKpiModal({ person: emp, mode: 'override' })} />
-                          )}
-                        </div>
+                      <td className="px-4 py-3 text-center">
+                        <ActionBtn
+                          label={emp.kpi_status === 'Finalized' ? 'Edit KPI' : 'Evaluate KPI'}
+                          color="indigo"
+                          onClick={() => setKpiModal({
+                            person: emp,
+                            mode  : emp.kpi_status === 'Finalized' ? 'edit' : 'evaluate',
+                          })}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -716,16 +847,13 @@ export default function ManagerDashboard() {
 
                   <div className="flex gap-2 pt-1">
                     <button
-                      onClick={() => setKpiModal({ person: tl, mode: tl.kpi_status === 'Pending' ? 'assign' : 'edit' })}
-                      className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-violet-50 text-violet-700 hover:bg-violet-100 transition"
-                    >
-                      {tl.kpi_status === 'Pending' ? 'Assign KPI' : 'Edit KPI'}
-                    </button>
-                    <button
-                      onClick={() => setEvalModal(tl)}
+                      onClick={() => setKpiModal({
+                        person: tl,
+                        mode  : tl.kpi_status === 'Finalized' ? 'edit' : 'evaluate',
+                      })}
                       className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
                     >
-                      Evaluate
+                      {tl.kpi_status === 'Finalized' ? 'Edit KPI' : 'Evaluate KPI'}
                     </button>
                   </div>
                 </div>
