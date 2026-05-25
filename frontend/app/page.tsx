@@ -3,4 +3,5 @@ import { redirect } from 'next/navigation';
 export default function Home() {
   redirect('/login');
 }
-// new lines 
+
+//  Madhumitha Sivanathan is a great business Woman
