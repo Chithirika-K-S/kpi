@@ -365,6 +365,331 @@ app.get("/api/kpi", verifyToken, (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// MANAGER APIS
+// ─────────────────────────────────────────────
+
+// Middleware: Manager only
+function requireManager(req, res, next) {
+  if (req.user.role !== 'Manager') {
+    return res.status(403).json({ message: 'Access denied. Manager only.' });
+  }
+  next();
+}
+
+// GET /api/manager/stats  – org-level summary cards
+app.get('/api/manager/stats', verifyToken, requireManager, async (req, res) => {
+  try {
+    const [employees] = await Promise.all([
+      query(`SELECT COUNT(*) AS cnt FROM users WHERE role = 'Team Member'`),
+    ]);
+    const [teamLeads]  = await Promise.all([query(`SELECT COUNT(*) AS cnt FROM users WHERE role = 'Team Lead'`)]);
+    const [teams]      = await Promise.all([query(`SELECT COUNT(*) AS cnt FROM teams`)]);
+    const [avgRow]     = await Promise.all([query(`SELECT ROUND(AVG(final_score),1) AS avg_kpi FROM kpis WHERE final_score > 0`)]);
+    const [pending]    = await Promise.all([query(`SELECT COUNT(*) AS cnt FROM users u LEFT JOIN kpis k ON k.user_id = u.id WHERE u.role='Team Member' AND (k.id IS NULL OR k.final_score = 0)`)]);
+
+    res.json({
+      totalEmployees : employees[0]?.cnt  ?? 0,
+      totalTeamLeads : teamLeads[0]?.cnt  ?? 0,
+      totalTeams     : teams[0]?.cnt      ?? 0,
+      avgKpi         : avgRow[0]?.avg_kpi ?? 0,
+      pendingKpis    : pending[0]?.cnt    ?? 0,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/manager/analytics/monthly  – last 12 months avg KPI (org-wide)
+app.get('/api/manager/analytics/monthly', verifyToken, requireManager, async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        DATE_FORMAT(k.updated_at, '%b %Y') AS month_label,
+        DATE_FORMAT(k.updated_at, '%Y-%m') AS month_key,
+        ROUND(AVG(k.final_score), 1)       AS avg_score,
+        COUNT(*)                           AS count
+      FROM kpis k
+      WHERE k.final_score > 0
+        AND k.updated_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      GROUP BY month_key, month_label
+      ORDER BY month_key ASC
+    `);
+    res.json({ monthly: rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/manager/analytics/teams  – per-team avg KPI
+app.get('/api/manager/analytics/teams', verifyToken, requireManager, async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        t.id              AS team_id,
+        t.team_name,
+        ROUND(AVG(k.final_score), 1) AS avg_score,
+        COUNT(u.id)       AS member_count,
+        SUM(CASE WHEN k.final_score > 0 THEN 1 ELSE 0 END) AS finalized
+      FROM teams t
+      LEFT JOIN users u  ON u.team_id = t.id AND u.role = 'Team Member'
+      LEFT JOIN kpis  k  ON k.user_id = u.id
+      GROUP BY t.id, t.team_name
+      ORDER BY avg_score DESC
+    `);
+    res.json({ teams: rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/manager/employees  – all team members with KPI
+app.get('/api/manager/employees', verifyToken, requireManager, async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        u.id, u.name, u.email, u.role, u.team_id,
+        t.team_name,
+        tl.name        AS team_lead_name,
+        k.auto_score, k.final_score,
+        k.communication, k.teamwork, k.discipline, k.initiative,
+        (k.communication + k.teamwork + k.discipline + k.initiative) AS lead_score,
+        CASE
+          WHEN k.final_score > 0 THEN 'Finalized'
+          WHEN k.communication IS NOT NULL THEN 'Draft'
+          ELSE 'Pending'
+        END AS kpi_status
+      FROM users u
+      LEFT JOIN teams t   ON t.id = u.team_id
+      LEFT JOIN users tl  ON tl.id = t.lead_id
+      LEFT JOIN kpis  k   ON k.user_id = u.id
+      WHERE u.role = 'Team Member'
+      ORDER BY u.name ASC
+    `);
+    res.json({ employees: rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/manager/teamleads  – all team leads with their team info
+app.get('/api/manager/teamleads', verifyToken, requireManager, async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        u.id, u.name, u.email,
+        t.id   AS team_id,
+        t.team_name,
+        COUNT(m.id) AS member_count,
+        k.auto_score, k.final_score,
+        k.communication, k.teamwork, k.discipline, k.initiative,
+        (k.communication + k.teamwork + k.discipline + k.initiative) AS lead_score,
+        CASE
+          WHEN k.final_score > 0 THEN 'Finalized'
+          WHEN k.communication IS NOT NULL THEN 'Draft'
+          ELSE 'Pending'
+        END AS kpi_status
+      FROM users u
+      LEFT JOIN teams t   ON t.lead_id = u.id
+      LEFT JOIN users m   ON m.team_id = t.id AND m.role = 'Team Member'
+      LEFT JOIN kpis  k   ON k.user_id = u.id
+      WHERE u.role = 'Team Lead'
+      GROUP BY u.id, u.name, u.email, t.id, t.team_name,
+               k.auto_score, k.final_score, k.communication,
+               k.teamwork, k.discipline, k.initiative
+      ORDER BY u.name ASC
+    `);
+    res.json({ teamLeads: rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/manager/kpi/assign  – assign / override KPI scores for any user
+app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res) => {
+  const { userId, autoScore, communication, teamwork, discipline, initiative, overrideReason } = req.body;
+  if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+  const comm  = communication ?? 0;
+  const team  = teamwork      ?? 0;
+  const disc  = discipline    ?? 0;
+  const init  = initiative    ?? 0;
+  const auto  = autoScore     ?? 0;
+  const lead  = comm + team + disc + init;
+  const final = parseFloat(auto) + lead;
+
+  try {
+    const existing = await query('SELECT id FROM kpis WHERE user_id = ?', [userId]);
+    if (existing.length === 0) {
+      await query(
+        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, lead_score, final_score)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, auto, comm, team, disc, init, lead, final]
+      );
+    } else {
+      await query(
+        `UPDATE kpis SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
+         lead_score=?, final_score=?, updated_at=NOW() WHERE user_id=?`,
+        [auto, comm, team, disc, init, lead, final, userId]
+      );
+    }
+    // Log override notification if reason given
+    if (overrideReason) {
+      const userRows = await query('SELECT team_id FROM users WHERE id=?', [userId]);
+      const teamId   = userRows[0]?.team_id;
+      if (teamId) {
+        const tlRows = await query('SELECT lead_id FROM teams WHERE id=?', [teamId]);
+        const tlId   = tlRows[0]?.lead_id;
+        if (tlId) {
+          await query(
+            `INSERT INTO notifications (user_id, message) VALUES (?, ?)`,
+            [tlId, `Manager overrode KPI for an employee. Reason: ${overrideReason}`]
+          ).catch(() => {});
+        }
+      }
+    }
+    res.json({ message: 'KPI saved.', finalScore: final });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/manager/teamlead/evaluate  – evaluate a team lead (manual scores)
+app.post('/api/manager/teamlead/evaluate', verifyToken, requireManager, async (req, res) => {
+  const { teamLeadId, communication, teamwork, discipline, initiative } = req.body;
+  if (!teamLeadId) return res.status(400).json({ message: 'teamLeadId is required' });
+
+  const comm  = communication ?? 0;
+  const team  = teamwork      ?? 0;
+  const disc  = discipline    ?? 0;
+  const init  = initiative    ?? 0;
+  const lead  = comm + team + disc + init;
+
+  try {
+    const existing = await query('SELECT id, auto_score FROM kpis WHERE user_id=?', [teamLeadId]);
+    if (existing.length === 0) {
+      await query(
+        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, lead_score, final_score)
+         VALUES (?, 0, ?, ?, ?, ?, ?, ?)`,
+        [teamLeadId, comm, team, disc, init, lead, lead]
+      );
+    } else {
+      const autoScore = existing[0].auto_score ?? 0;
+      const final     = parseFloat(autoScore) + lead;
+      await query(
+        `UPDATE kpis SET communication=?, teamwork=?, discipline=?, initiative=?,
+         lead_score=?, final_score=?, updated_at=NOW() WHERE user_id=?`,
+        [comm, team, disc, init, lead, final, teamLeadId]
+      );
+    }
+    res.json({ message: 'Team Lead evaluated.' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// GET /api/manager/teams  – list all teams (for filter dropdowns)
+app.get('/api/manager/teams', verifyToken, requireManager, async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT t.id, t.team_name, u.name AS lead_name, COUNT(m.id) AS member_count
+      FROM teams t
+      LEFT JOIN users u ON u.id = t.lead_id
+      LEFT JOIN users m ON m.team_id = t.id AND m.role = 'Team Member'
+      GROUP BY t.id, t.team_name, u.name
+      ORDER BY t.team_name ASC
+    `);
+    res.json({ teams: rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// AI CHAT  (Llama 3 via Groq)
+// ─────────────────────────────────────────────
+
+// POST /api/chat
+app.post("/api/chat", verifyToken, async (req, res) => {
+  const { message, history = [] } = req.body;
+  if (!message) return res.status(400).json({ message: "message is required" });
+
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!groqApiKey || groqApiKey === "your_groq_api_key_here") {
+    return res.status(500).json({ message: "Groq API key not configured. Set GROQ_API_KEY in backend/.env" });
+  }
+
+  // Fetch the current user's KPI so the assistant has context
+  let kpiContext = "No KPI data available for this user yet.";
+  try {
+    const kpiRows = await query(
+      "SELECT * FROM kpis WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+      [req.user.id]
+    );
+    if (kpiRows[0]) {
+      const k = kpiRows[0];
+      const leadScore =
+        (k.communication ?? 0) + (k.teamwork ?? 0) +
+        (k.discipline   ?? 0) + (k.initiative ?? 0);
+      kpiContext =
+        `User KPI data:\n` +
+        `- Auto/System Score: ${k.auto_score ?? 0}/80\n` +
+        `- Team Lead Score: ${leadScore}/20\n` +
+        `  - Communication: ${k.communication ?? 0}/5\n` +
+        `  - Teamwork: ${k.teamwork ?? 0}/5\n` +
+        `  - Discipline: ${k.discipline ?? 0}/5\n` +
+        `  - Initiative: ${k.initiative ?? 0}/5\n` +
+        `- Final KPI Score: ${k.final_score ?? 0}/100`;
+    }
+  } catch (_) { /* non-fatal – proceed without KPI context */ }
+
+  // Build messages for Groq (OpenAI-compatible format)
+  const systemPrompt =
+    `You are a helpful KPI assistant for a team performance tracking system called StackPulse. ` +
+    `You help team members understand their KPI scores, identify areas for improvement, and plan their work. ` +
+    `Be concise, supportive, and professional.\n\n${kpiContext}`;
+
+  // Convert frontend history to Groq message format (drop any leading assistant messages)
+  const groqMessages = [
+    ...history
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: message },
+  ];
+
+  try {
+    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqApiKey}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",   // free Llama 3 8B on Groq
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...groqMessages,
+        ],
+        max_tokens: 1024,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!groqRes.ok) {
+      const errBody = await groqRes.text();
+      console.error("Groq error:", errBody);
+      return res.status(502).json({ message: "Groq API error: " + errBody });
+    }
+
+    const groqData = await groqRes.json();
+    const reply = groqData.choices?.[0]?.message?.content ?? "Sorry, I could not generate a response.";
+    res.json({ reply });
+  } catch (err) {
+    console.error("Chat error:", err);
+    res.status(500).json({ message: "Failed to reach Groq API: " + err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // START SERVER
 // ─────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;

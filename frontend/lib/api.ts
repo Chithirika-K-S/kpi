@@ -79,6 +79,37 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // ─── Manager ───────────────────────────────────────
+  getManagerStats: () =>
+    apiFetch<ManagerStats>('/api/manager/stats'),
+
+  getManagerMonthly: () =>
+    apiFetch<{ monthly: MonthlyKpi[] }>('/api/manager/analytics/monthly'),
+
+  getManagerTeamAnalytics: () =>
+    apiFetch<{ teams: TeamKpi[] }>('/api/manager/analytics/teams'),
+
+  getManagerEmployees: () =>
+    apiFetch<{ employees: EmployeeRow[] }>('/api/manager/employees'),
+
+  getManagerTeamLeads: () =>
+    apiFetch<{ teamLeads: TeamLeadRow[] }>('/api/manager/teamleads'),
+
+  getManagerTeams: () =>
+    apiFetch<{ teams: TeamOption[] }>('/api/manager/teams'),
+
+  managerAssignKpi: (payload: ManagerKpiPayload) =>
+    apiFetch<{ message: string; finalScore: number }>('/api/manager/kpi/assign', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  managerEvaluateTeamLead: (payload: EvaluateLeadPayload) =>
+    apiFetch<{ message: string }>('/api/manager/teamlead/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   // ─── Notifications ────────────────────────────────────────────
   getNotifications: (tlId: number) =>
     apiFetch<any>(`/api/notifications/${tlId}`),
@@ -132,4 +163,88 @@ export interface KPI {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+// ─── Manager types ──────────────────────────────────
+
+export interface ManagerStats {
+  totalEmployees: number;
+  totalTeamLeads: number;
+  totalTeams: number;
+  avgKpi: number;
+  pendingKpis: number;
+}
+
+export interface MonthlyKpi {
+  month_label: string;
+  month_key: string;
+  avg_score: number;
+  count: number;
+}
+
+export interface TeamKpi {
+  team_id: number;
+  team_name: string;
+  avg_score: number;
+  member_count: number;
+  finalized: number;
+}
+
+export interface EmployeeRow {
+  id: number;
+  name: string;
+  email: string;
+  team_id: number | null;
+  team_name: string | null;
+  team_lead_name: string | null;
+  auto_score: number;
+  final_score: number;
+  communication: number;
+  teamwork: number;
+  discipline: number;
+  initiative: number;
+  lead_score: number;
+  kpi_status: 'Pending' | 'Draft' | 'Finalized';
+}
+
+export interface TeamLeadRow {
+  id: number;
+  name: string;
+  email: string;
+  team_id: number | null;
+  team_name: string | null;
+  member_count: number;
+  auto_score: number;
+  final_score: number;
+  communication: number;
+  teamwork: number;
+  discipline: number;
+  initiative: number;
+  lead_score: number;
+  kpi_status: 'Pending' | 'Draft' | 'Finalized';
+}
+
+export interface TeamOption {
+  id: number;
+  team_name: string;
+  lead_name: string | null;
+  member_count: number;
+}
+
+export interface ManagerKpiPayload {
+  userId: number;
+  autoScore: number;
+  communication: number;
+  teamwork: number;
+  discipline: number;
+  initiative: number;
+  overrideReason?: string;
+}
+
+export interface EvaluateLeadPayload {
+  teamLeadId: number;
+  communication: number;
+  teamwork: number;
+  discipline: number;
+  initiative: number;
 }
