@@ -1,5 +1,4 @@
-const bcrypt = require('bcryptjs');
-
+import bcrypt from 'bcryptjs';
 const users = [
   { email: 'arun.kumar@company.com', password: 'Arun@123' },
   { email: 'priya.sharma@company.com', password: 'Priya@123' },
@@ -12,7 +11,10 @@ const users = [
   { email: 'divya.nair@company.com', password: 'Divya@123' },
 
   { email: 'ajay.menon@company.com', password: 'Ajay@123' },
-  { email: 'lakshmi.raman@company.com', password: 'Lakshmi@123' }
+  { email: 'lakshmi.raman@company.com', password: 'Lakshmi@123' },
+
+  // New Admin
+  { email: 'admin2@company.com', password: 'Admin@123' }
 ];
 
 (async () => {
