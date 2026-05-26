@@ -1,7 +1,7 @@
 // components/EvalModal.tsx
 "use client";
 import { useState, useEffect } from "react";
-import { X, Save, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { X, Save, CheckCircle, AlertCircle, Loader2, Pencil } from "lucide-react";
 import * as api from "@/lib/api";
 import ScoreRing from "./ScoreRing";
 
@@ -21,14 +21,20 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
   const [remarks,   setRemarks] = useState("");
   const [status,    setStatus]  = useState<"idle" | "saved" | "error">("idle");
   const [errorMsg,  setError]   = useState("");
+  const [editMode,  setEditMode] = useState(false);
 
   useEffect(() => {
     api.getMemberDetail(teamLeadId, member.id, periodId).then((res) => {
       setDetail(res);
       const init: typeof scores = {};
+      const kpiStatus = res.finalKpi?.status ?? "pending";
       res.criteria.forEach((c: any) => {
+        // Only pre-fill scores if TL has previously saved (draft or finalized).
+        // For 'pending' members the DB default is 0 which means "not entered" —
+        // show empty fields so the TL must consciously type a value.
+        const hasScore = kpiStatus !== "pending" && c.tl_raw_score != null;
         init[c.id] = {
-          score:    c.tl_raw_score != null ? String(c.tl_raw_score) : "",
+          score:    hasScore ? String(c.tl_raw_score) : "",
           comments: c.tl_comments ?? "",
         };
       });
@@ -60,7 +66,17 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
   const handleFinalize = async () => {
     setFinal(true);
     try {
+      // Save scores first (so edits in edit-mode are persisted before finalizing)
+      const evaluations = Object.entries(scores)
+        .filter(([, v]) => v.score !== "")
+        .map(([criteriaId, v]) => ({
+          criteriaId: parseInt(criteriaId),
+          score:      parseFloat(v.score),
+          comments:   v.comments,
+        }));
+      await api.submitTLEvaluation({ teamLeadId, employeeId: member.id, periodId, evaluations });
       await api.finalizeKPI({ teamLeadId, employeeId: member.id, periodId, tlRemarks: remarks });
+      setEditMode(false);
       onSaved(); onClose();
     } catch (e: any) {
       setStatus("error"); setError(e.message);
@@ -77,7 +93,7 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
   // auto_score is out of 80; show it directly
   const sysScore     = parseFloat(detail?.autoScore ?? detail?.finalKpi?.auto_score ?? 0);
   const finalPreview = sysScore + tlTotal;
-  const isFinalized  = detail?.finalKpi?.status === "finalized";
+  const isFinalized  = detail?.finalKpi?.status === "finalized" && !editMode;
   const allFilled    = detail?.criteria.every((c: any) => scores[c.id]?.score !== "");
 
   const ringColors = { sys: "#2563eb", tl: "#d97706", final: finalPreview >= 80 ? "#059669" : finalPreview >= 60 ? "#d97706" : "#dc2626" };
@@ -121,10 +137,20 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
               ))}
             </div>
 
-            {isFinalized && (
-              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-emerald-700 text-sm font-medium">
-                <CheckCircle size={15} />
-                KPI finalized{detail.finalKpi.finalized_at ? ` on ${new Date(detail.finalKpi.finalized_at).toLocaleDateString()}` : ""}
+            {detail?.finalKpi?.status === "finalized" && (
+              <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
+                  <CheckCircle size={15} />
+                  KPI finalized{detail.finalKpi.finalized_at ? ` on ${new Date(detail.finalKpi.finalized_at).toLocaleDateString()}` : ""}
+                </div>
+                {!editMode && (
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-white border border-emerald-300 hover:border-emerald-500 px-3 py-1.5 rounded-lg transition-all"
+                  >
+                    <Pencil size={12} /> Edit KPI
+                  </button>
+                )}
               </div>
             )}
 
@@ -218,8 +244,17 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
             )}
 
             {/* Actions – matches login button style */}
-            {!isFinalized && (
+            {(!isFinalized || editMode) && (
               <div className="flex gap-3 pt-1">
+                {editMode && (
+                  <button
+                    onClick={() => { setEditMode(false); }}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-300
+                               text-slate-500 rounded-xl text-sm font-semibold transition-all shadow-sm"
+                  >
+                    <X size={15} /> Cancel
+                  </button>
+                )}
                 <button
                   onClick={handleSave}
                   disabled={saving}
@@ -237,7 +272,7 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
                              rounded-xl text-sm font-semibold transition-all shadow-sm disabled:opacity-50 active:scale-[0.98]"
                 >
                   {finalizing ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />}
-                  Finalize KPI
+                  {editMode ? "Re-finalize KPI" : "Finalize KPI"}
                 </button>
               </div>
             )}

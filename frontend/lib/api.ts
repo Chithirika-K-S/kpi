@@ -204,7 +204,7 @@ export interface EmployeeRow {
   discipline: number;
   initiative: number;
   lead_score: number;
-  kpi_status: 'Pending' | 'Draft' | 'Finalized';
+  kpi_status: 'pending' | 'draft' | 'finalized';
 }
 
 export interface TeamLeadRow {
@@ -221,7 +221,7 @@ export interface TeamLeadRow {
   discipline: number;
   initiative: number;
   lead_score: number;
-  kpi_status: 'Pending' | 'Draft' | 'Finalized';
+  kpi_status: 'pending' | 'draft' | 'finalized';
 }
 
 export interface TeamOption {

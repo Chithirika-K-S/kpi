@@ -9,7 +9,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────
 type Tab = 'analytics' | 'employees' | 'teamleads';
-type StatusFilter = 'All' | 'Finalized' | 'Draft' | 'Pending';
+type StatusFilter = 'all' | 'finalized' | 'draft' | 'pending';
 
 // ─── Tiny inline bar chart (pure SVG, no deps) ────────────────────
 function BarChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
@@ -115,13 +115,15 @@ function TeamChart({ data }: { data: TeamKpi[] }) {
 
 // ─── KPI status badge ──────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
+  const s = (status ?? '').toLowerCase();
   const cls =
-    status === 'Finalized' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-    status === 'Draft'     ? 'bg-amber-50  text-amber-700  border-amber-200'     :
-                              'bg-slate-50  text-slate-500  border-slate-200';
+    s === 'finalized' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+    s === 'draft'     ? 'bg-amber-50  text-amber-700  border-amber-200'     :
+                        'bg-slate-50  text-slate-500  border-slate-200';
+  const label = s.charAt(0).toUpperCase() + s.slice(1) || 'Pending';
   return (
     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cls}`}>
-      {status}
+      {label}
     </span>
   );
 }
@@ -363,9 +365,9 @@ export default function ManagerDashboard() {
   // ── filters ───────────────────────────────────────
   const [empSearch,     setEmpSearch]     = useState('');
   const [empTeam,       setEmpTeam]       = useState('All');
-  const [empStatus,     setEmpStatus]     = useState<StatusFilter>('All');
+  const [empStatus,     setEmpStatus]     = useState<StatusFilter>('all');
   const [tlSearch,      setTlSearch]      = useState('');
-  const [tlStatus,      setTlStatus]      = useState<StatusFilter>('All');
+  const [tlStatus,      setTlStatus]      = useState<StatusFilter>('all');
 
   // chart filter: 'all' | team_id as string
   const [chartFilter,   setChartFilter]   = useState<string>('all');
@@ -432,14 +434,14 @@ export default function ManagerDashboard() {
     const matchSearch = e.name.toLowerCase().includes(empSearch.toLowerCase()) ||
                         e.email.toLowerCase().includes(empSearch.toLowerCase());
     const matchTeam   = empTeam === 'All' || e.team_name === empTeam;
-    const matchStatus = empStatus === 'All' || e.kpi_status === empStatus;
+    const matchStatus = empStatus === 'all' || (e.kpi_status ?? 'pending').toLowerCase() === empStatus;
     return matchSearch && matchTeam && matchStatus;
   }), [employees, empSearch, empTeam, empStatus]);
 
   const filteredTeamLeads = useMemo(() => teamLeads.filter(tl => {
     const matchSearch = tl.name.toLowerCase().includes(tlSearch.toLowerCase()) ||
                         tl.email.toLowerCase().includes(tlSearch.toLowerCase());
-    const matchStatus = tlStatus === 'All' || tl.kpi_status === tlStatus;
+    const matchStatus = tlStatus === 'all' || (tl.kpi_status ?? 'pending').toLowerCase() === tlStatus;
     return matchSearch && matchStatus;
   }), [teamLeads, tlSearch, tlStatus]);
 
@@ -702,14 +704,14 @@ export default function ManagerDashboard() {
                 <option value="All">All Teams</option>
                 {teams.map(t => <option key={t.id} value={t.team_name}>{t.team_name}</option>)}
               </select>
-              {(['All','Finalized','Draft','Pending'] as StatusFilter[]).map(s => (
+              {(['all','finalized','draft','pending'] as StatusFilter[]).map(s => (
                 <button
                   key={s}
                   onClick={() => setEmpStatus(s)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition capitalize ${
                     empStatus === s ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
                   }`}
-                >{s}</button>
+                >{s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}</button>
               ))}
               <span className="ml-auto text-xs text-slate-400">{filteredEmployees.length} results</span>
             </div>
@@ -753,11 +755,11 @@ export default function ManagerDashboard() {
                       <td className="px-4 py-3 text-center"><StatusBadge status={emp.kpi_status} /></td>
                       <td className="px-4 py-3 text-center">
                         <ActionBtn
-                          label={emp.kpi_status === 'Finalized' ? 'Edit KPI' : 'Evaluate KPI'}
+                          label={emp.kpi_status === 'finalized' ? 'Edit KPI' : 'Evaluate KPI'}
                           color="indigo"
                           onClick={() => setKpiModal({
                             person: emp,
-                            mode  : emp.kpi_status === 'Finalized' ? 'edit' : 'evaluate',
+                            mode  : emp.kpi_status === 'finalized' ? 'edit' : 'evaluate',
                           })}
                         />
                       </td>
@@ -782,14 +784,14 @@ export default function ManagerDashboard() {
                 placeholder="Search name or email…"
                 className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 w-52"
               />
-              {(['All','Finalized','Draft','Pending'] as StatusFilter[]).map(s => (
+              {(['all','finalized','draft','pending'] as StatusFilter[]).map(s => (
                 <button
                   key={s}
                   onClick={() => setTlStatus(s)}
                   className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
                     tlStatus === s ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300'
                   }`}
-                >{s}</button>
+                >{s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}</button>
               ))}
               <span className="ml-auto text-xs text-slate-400">{filteredTeamLeads.length} results</span>
             </div>
@@ -849,11 +851,11 @@ export default function ManagerDashboard() {
                     <button
                       onClick={() => setKpiModal({
                         person: tl,
-                        mode  : tl.kpi_status === 'Finalized' ? 'edit' : 'evaluate',
+                        mode  : tl.kpi_status === 'finalized' ? 'edit' : 'evaluate',
                       })}
                       className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
                     >
-                      {tl.kpi_status === 'Finalized' ? 'Edit KPI' : 'Evaluate KPI'}
+                      {tl.kpi_status === 'finalized' ? 'Edit KPI' : 'Evaluate KPI'}
                     </button>
                   </div>
                 </div>
