@@ -11,75 +11,99 @@ import {
 type Tab = 'analytics' | 'employees' | 'teamleads';
 type StatusFilter = 'All' | 'Finalized' | 'Draft' | 'Pending';
 
-// ─── Tiny inline bar chart (pure SVG, no deps) ────────────────────
-function BarChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
-  const max = Math.max(...data.map(d => Number(d.avg_score)), 1);
+// ─── SVG Line chart (pure SVG, no deps) ────────────────────────
+function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
+  const W = 560, H = 140, PL = 32, PR = 8, PT = 12, PB = 24;
+  const chartW = W - PL - PR;
+  const chartH = H - PT - PB;
+  const scores = data.map(d => Number(d.avg_score));
+  const max = Math.max(...scores, 1);
+
+  // Compute (x, y) for each data point
+  const points = scores.map((s, i) => ({
+    x: PL + (scores.length <= 1 ? chartW / 2 : (i / (scores.length - 1)) * chartW),
+    y: PT + chartH - (s / 100) * chartH,
+    score: s,
+    label: data[i]?.month_label ?? '',
+  }));
+
+  const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
+
+  // Smooth area fill path
+  const areaPath = points.length
+    ? `M${points[0].x},${PT + chartH} L${points[0].x},${points[0].y} ` +
+      points.slice(1).map(p => `L${p.x},${p.y}`).join(' ') +
+      ` L${points[points.length - 1].x},${PT + chartH} Z`
+    : '';
+
   return (
     <div className="w-full">
-      {/* Y-axis labels + bars */}
-      <div className="flex gap-2">
-        {/* Y-axis */}
-        <div className="flex flex-col justify-between text-[9px] text-slate-400 pr-1 pb-6" style={{ height: 160 }}>
-          <span>100</span>
-          <span>75</span>
-          <span>50</span>
-          <span>25</span>
-          <span>0</span>
-        </div>
-        {/* Bars */}
-        <div className="flex-1 flex flex-col gap-1">
-          {/* Grid lines */}
-          <div className="relative flex items-end gap-1.5" style={{ height: 140 }}>
-            {[100, 75, 50, 25].map(v => (
-              <div
-                key={v}
-                className="absolute w-full border-t border-dashed border-slate-100"
-                style={{ bottom: `${v}%` }}
-              />
-            ))}
-            {data.map((d, i) => {
-              const pct = (Number(d.avg_score) / 100) * 100;
-              return (
-                <div key={i} className="flex-1 flex flex-col justify-end items-center group relative h-full">
-                  {/* Hover tooltip */}
-                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-10 shadow-lg">
-                    {d.avg_score}/100
-                  </div>
-                  <div
-                    className="w-full rounded-t-md transition-all duration-500 cursor-default"
-                    style={{
-                      height    : `${pct}%`,
-                      minHeight : 4,
-                      background: `linear-gradient(to top, #6d28d9, #818cf8)`,
-                    }}
-                  />
-                </div>
-              );
-            })}
-            {data.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-slate-400 text-sm">No data available yet.</p>
-              </div>
-            )}
-          </div>
-          {/* X-axis labels */}
-          <div className="flex gap-1.5">
-            {data.map((d, i) => (
-              <div key={i} className="flex-1 text-center">
-                <span className="text-[8px] text-slate-400 block leading-tight">
-                  {d.month_label.split(' ')[0]}
-                </span>
-                <span className="text-[7px] text-slate-300 block">
-                  {d.month_label.split(' ')[1]}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 160 }} overflow="visible">
+        <defs>
+          <linearGradient id="lineAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="#818cf8" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#818cf8" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines at 0 / 25 / 50 / 75 / 100 */}
+        {[0, 25, 50, 75, 100].map(v => {
+          const y = PT + chartH - (v / 100) * chartH;
+          return (
+            <g key={v}>
+              <line x1={PL} y1={y} x2={W - PR} y2={y} stroke="#e2e8f0" strokeWidth={1} strokeDasharray="4 3" />
+              <text x={PL - 4} y={y + 3.5} textAnchor="end" fontSize={8} fill="#94a3b8">{v}</text>
+            </g>
+          );
+        })}
+
+        {/* Area fill */}
+        {areaPath && <path d={areaPath} fill="url(#lineAreaGrad)" />}
+
+        {/* Line */}
+        {points.length > 1 && (
+          <polyline
+            points={polyline}
+            fill="none"
+            stroke="url(#lineGrad)"
+            strokeWidth={2.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
+        <defs>
+          <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stopColor="#6d28d9" />
+            <stop offset="100%" stopColor="#818cf8" />
+          </linearGradient>
+        </defs>
+
+        {/* Data points + tooltips */}
+        {points.map((p, i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={4} fill="#fff" stroke="#6d28d9" strokeWidth={2} />
+            {/* Invisible hover target */}
+            <circle cx={p.x} cy={p.y} r={10} fill="transparent">
+              <title>{p.label}: {p.score}/100</title>
+            </circle>
+            {/* X-axis labels */}
+            <text x={p.x} y={H - 4} textAnchor="middle" fontSize={7.5} fill="#94a3b8">
+              {p.label.split(' ')[0]}
+            </text>
+            <text x={p.x} y={H + 5} textAnchor="middle" fontSize={6.5} fill="#cbd5e1">
+              {p.label.split(' ')[1]}
+            </text>
+          </g>
+        ))}
+
+        {data.length === 0 && (
+          <text x={W / 2} y={H / 2} textAnchor="middle" fontSize={12} fill="#94a3b8">No data available yet.</text>
+        )}
+      </svg>
+
       {/* Legend */}
-      <div className="flex items-center gap-2 mt-3">
-        <div className="w-3 h-3 rounded-sm" style={{ background: 'linear-gradient(to top, #6d28d9, #818cf8)' }} />
+      <div className="flex items-center gap-2 mt-1">
+        <div className="w-6 h-0.5 rounded-full" style={{ background: 'linear-gradient(to right, #6d28d9, #818cf8)' }} />
         <span className="text-xs text-slate-500">{label}</span>
       </div>
     </div>
@@ -167,7 +191,7 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
   const leadScore  = communication + teamwork + discipline + initiative;  // 0–20
   const finalScore = Math.min(autoScore + leadScore, 100);                // 0–100
 
-  const handleSave = async () => {
+  const handleSave = async (saveDraft: boolean) => {
     setSaving(true); setErr('');
     try {
       await api.managerAssignKpi({
@@ -177,6 +201,7 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
         teamwork,
         discipline,
         initiative,
+        saveDraft,
       });
       onSaved();
       onClose();
@@ -188,7 +213,6 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
   };
 
   const title     = mode === 'evaluate' ? 'Evaluate KPI' : 'Edit KPI';
-  const btnColor  = 'bg-indigo-600 hover:bg-indigo-700';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
@@ -256,9 +280,16 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
               Cancel
             </button>
             <button
-              onClick={handleSave}
+              onClick={() => handleSave(true)}
               disabled={saving}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50 ${btnColor}`}
+              className="flex-1 py-2 rounded-xl border border-amber-300 text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 transition disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save Draft'}
+            </button>
+            <button
+              onClick={() => handleSave(false)}
+              disabled={saving}
+              className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save KPI'}
             </button>
@@ -288,10 +319,10 @@ function EvalModal({ lead, onClose, onSaved }: EvalModalProps) {
 
   const totalManual = communication + teamwork + discipline + initiative;
 
-  const handleSave = async () => {
+  const handleSave = async (saveDraft: boolean) => {
     setSaving(true); setErr('');
     try {
-      await api.managerEvaluateTeamLead({ teamLeadId: lead.id, communication, teamwork, discipline, initiative });
+      await api.managerEvaluateTeamLead({ teamLeadId: lead.id, communication, teamwork, discipline, initiative, saveDraft });
       onSaved(); onClose();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Failed.');
@@ -311,8 +342,6 @@ function EvalModal({ lead, onClose, onSaved }: EvalModalProps) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
         </div>
 
-    
-
         <div className="space-y-4">
           <div className="bg-slate-50 rounded-xl p-4 space-y-3">
             <MetricRow label="Communication" value={communication} max={5} onChange={setCommunication} />
@@ -331,10 +360,16 @@ function EvalModal({ lead, onClose, onSaved }: EvalModalProps) {
           <div className="flex gap-3">
             <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition">Cancel</button>
             <button
-              onClick={handleSave} disabled={saving}
+              onClick={() => handleSave(true)} disabled={saving}
+              className="flex-1 py-2 rounded-xl border border-amber-300 text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 transition disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save Draft'}
+            </button>
+            <button
+              onClick={() => handleSave(false)} disabled={saving}
               className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 transition disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Submit Evaluation'}
+              {saving ? 'Saving…' : 'Save KPI'}
             </button>
           </div>
         </div>
@@ -605,7 +640,7 @@ export default function ManagerDashboard() {
                     <div className="w-7 h-7 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" />
                   </div>
                 ) : (
-                  <BarChart
+                  <LineChart
                     data={chartData}
                     label={
                       chartFilter === 'all'
@@ -657,19 +692,34 @@ export default function ManagerDashboard() {
               <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800 mb-4">Organisation Performance</h3>
                 <div className="space-y-3">
-                  {[
-                    { label: 'High Performers (80+)',  count: employees.filter(e => e.final_score >= 80).length,                                     color: 'bg-emerald-500' },
-                    { label: 'Average (50–79)',         count: employees.filter(e => e.final_score >= 50 && e.final_score < 80).length,              color: 'bg-amber-400'  },
-                    { label: 'Below Target (<50)',      count: employees.filter(e => Number(e.final_score) > 0 && e.final_score < 50).length,        color: 'bg-rose-500'   },
-                    { label: 'Not Yet Assigned',        count: employees.filter(e => !e.final_score || Number(e.final_score) === 0).length,           color: 'bg-slate-300'  },
-                  ].map(d => {
+                  {(() => {
+                    const highPerformers = employees.filter(e => Number(e.final_score) >= 80);
+                    const avgPerformers  = employees.filter(e => Number(e.final_score) >= 50 && Number(e.final_score) < 80);
+                    const belowTarget    = employees.filter(e => Number(e.final_score) > 0 && Number(e.final_score) < 50);
+                    const notAssigned    = employees.filter(e => !e.final_score || Number(e.final_score) === 0);
+                    const highAvg = highPerformers.length
+                      ? Math.round(highPerformers.reduce((sum, e) => sum + Number(e.final_score), 0) / highPerformers.length)
+                      : null;
+                    return [
+                    { label: 'High Performers (80+)',  count: highPerformers.length, avg: highAvg,  color: 'bg-emerald-500' },
+                    { label: 'Average (50–79)',         count: avgPerformers.length,  avg: null,     color: 'bg-amber-400'  },
+                    { label: 'Below Target (<50)',      count: belowTarget.length,    avg: null,     color: 'bg-rose-500'   },
+                    { label: 'Not Yet Assigned',        count: notAssigned.length,    avg: null,     color: 'bg-slate-300'  },
+                    ];
+                  })().map(d => {
                     const total = employees.length || 1;
                     const pct   = Math.round((d.count / total) * 100);
                     return (
                       <div key={d.label}>
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-xs text-slate-600">{d.label}</span>
-                          <span className="text-xs font-bold text-slate-700">{d.count} <span className="text-slate-400 font-normal">({pct}%)</span></span>
+                          <span className="text-xs font-bold text-slate-700">
+                            {d.count}
+                            {d.avg !== null && (
+                              <span className="text-emerald-600 font-semibold ml-1">(avg {d.avg})</span>
+                            )}
+                            {' '}<span className="text-slate-400 font-normal">({pct}%)</span>
+                          </span>
                         </div>
                         <div className="w-full bg-slate-100 rounded-full h-2">
                           <div className={`h-full ${d.color} rounded-full transition-all`} style={{ width: `${pct}%` }} />

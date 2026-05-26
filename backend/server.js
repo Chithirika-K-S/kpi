@@ -64,20 +64,11 @@ async function runMigrations() {
     //   'finalized' → when TL clicks Finalize via POST /api/team/finalize-kpi
     //   'pending'   → default for new rows, or rows with no criteria entered
 
-    // ── Migration 3: one-time full status reset ─────────────────
-    // Previous migrations set statuses incorrectly via backfill.
-    // Reset ALL rows to 'pending' unless they were explicitly finalized
-    // (finalized_at IS NOT NULL, meaning the TL clicked Finalize in the app).
-    // This runs whenever any non-finalized row has a non-pending status
-    // (i.e. leftover from old bad backfills).
-    const staleRows = await query(
-      `SELECT COUNT(*) AS cnt FROM kpis WHERE status != 'pending' AND finalized_at IS NULL`
-    );
-    if (staleRows[0]?.cnt > 0) {
-      console.log("[migration] Resetting stale statuses to pending...");
-      await query(`UPDATE kpis SET status = 'pending' WHERE finalized_at IS NULL`);
-      console.log("[migration] Status reset complete.");
-    }
+    // ── Migration 3 (removed) ──────────────────────────────────────
+    // The old blanket reset that wiped status for rows with finalized_at IS NULL
+    // was destructive: Manager-assigned KPIs never got finalized_at set, so they
+    // were reset to 'pending' on every restart. Removed — status is now managed
+    // explicitly by each write path and is never reset automatically.
 
   } catch (err) {
     console.error("[migration] Failed:", err.message);
@@ -515,14 +506,22 @@ app.get('/api/manager/employees', verifyToken, requireManager, async (req, res) 
     const rows = await query(`
       SELECT
         u.id, u.name, u.email, u.role, u.team_id,
-        t.name          AS team_name,
-        tl.name         AS team_lead_name,
-        k.auto_score, k.final_score,
-        k.communication, k.teamwork, k.discipline, k.initiative,
-        k.lead_score,
-        k.status        AS kpi_status
-        (k.communication + k.teamwork + k.discipline + k.initiative) AS lead_score,
-        COALESCE(k.status, 'pending') AS kpi_status
+        t.name                       AS team_name,
+        tl.name                      AS team_lead_name,
+        COALESCE(k.auto_score, 0)    AS auto_score,
+        COALESCE(k.final_score, 0)   AS final_score,
+        COALESCE(k.communication, 0) AS communication,
+        COALESCE(k.teamwork, 0)      AS teamwork,
+        COALESCE(k.discipline, 0)    AS discipline,
+        COALESCE(k.initiative, 0)    AS initiative,
+        (COALESCE(k.communication,0) + COALESCE(k.teamwork,0)
+          + COALESCE(k.discipline,0) + COALESCE(k.initiative,0)) AS lead_score,
+        CASE
+          WHEN k.id IS NULL THEN 'Pending'
+          WHEN k.status = 'finalized' THEN 'Finalized'
+          WHEN k.status = 'draft'     THEN 'Draft'
+          ELSE 'Pending'
+        END AS kpi_status
       FROM users u
       LEFT JOIN teams t   ON t.id = u.team_id
       LEFT JOIN users tl  ON tl.id = t.lead_id
@@ -532,6 +531,7 @@ app.get('/api/manager/employees', verifyToken, requireManager, async (req, res) 
     `);
     res.json({ employees: rows });
   } catch (err) {
+    console.error('manager/employees error:', err.message);
     res.status(500).json({ message: err.message });
   }
 });
@@ -542,120 +542,160 @@ app.get('/api/manager/teamleads', verifyToken, requireManager, async (req, res) 
     const rows = await query(`
       SELECT
         u.id, u.name, u.email,
-        t.id            AS team_id,
-        t.name          AS team_name,
-        COUNT(m.id)     AS member_count,
-        k.auto_score, k.final_score,
-        k.communication, k.teamwork, k.discipline, k.initiative,
-        k.lead_score,
-        k.status        AS kpi_status
-        (k.communication + k.teamwork + k.discipline + k.initiative) AS lead_score,
-        COALESCE(k.status, 'pending') AS kpi_status
+        t.id                         AS team_id,
+        t.name                       AS team_name,
+        COUNT(m.id)                  AS member_count,
+        COALESCE(k.auto_score, 0)    AS auto_score,
+        COALESCE(k.final_score, 0)   AS final_score,
+        COALESCE(k.communication, 0) AS communication,
+        COALESCE(k.teamwork, 0)      AS teamwork,
+        COALESCE(k.discipline, 0)    AS discipline,
+        COALESCE(k.initiative, 0)    AS initiative,
+        (COALESCE(k.communication,0) + COALESCE(k.teamwork,0)
+          + COALESCE(k.discipline,0) + COALESCE(k.initiative,0)) AS lead_score,
+        CASE
+          WHEN k.id IS NULL THEN 'Pending'
+          WHEN k.status = 'finalized' THEN 'Finalized'
+          WHEN k.status = 'draft'     THEN 'Draft'
+          ELSE 'Pending'
+        END AS kpi_status
       FROM users u
       LEFT JOIN teams t   ON t.lead_id = u.id
       LEFT JOIN users m   ON m.team_id = t.id AND m.role = 'Team Member'
       LEFT JOIN kpis  k   ON k.user_id = u.id
       WHERE u.role = 'Team Lead'
       GROUP BY u.id, u.name, u.email, t.id, t.name,
-               k.auto_score, k.final_score, k.communication,
-               k.teamwork, k.discipline, k.initiative, k.lead_score, k.status
+               k.id, k.auto_score, k.final_score, k.communication,
+               k.teamwork, k.discipline, k.initiative, k.status
       ORDER BY u.name ASC
     `);
     res.json({ teamLeads: rows });
   } catch (err) {
+    console.error('manager/teamleads error:', err.message);
     res.status(500).json({ message: err.message });
   }
 });
 
-// POST /api/manager/kpi/assign  – assign / override KPI scores for any user
+// POST /api/manager/kpi/assign  – assign / draft / finalize KPI scores for any user
+// saveDraft=true  → status = 'draft'
+// saveDraft=false → status = 'finalized'
 app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res) => {
-  const { userId, autoScore, communication, teamwork, discipline, initiative, overrideReason } = req.body;
+  const { userId, autoScore, communication, teamwork, discipline, initiative, saveDraft } = req.body;
   if (!userId) return res.status(400).json({ message: 'userId is required' });
 
-  const comm = communication ?? 0;
-  const team = teamwork      ?? 0;
-  const disc = discipline    ?? 0;
-  const init = initiative    ?? 0;
-  const auto = autoScore     ?? 0;
-  const comm  = communication ?? 0;
-  const team  = teamwork      ?? 0;
-  const disc  = discipline    ?? 0;
-  const init  = initiative    ?? 0;
-  const auto  = autoScore     ?? 0;
+  const comm  = Number(communication ?? 0);
+  const team  = Number(teamwork      ?? 0);
+  const disc  = Number(discipline    ?? 0);
+  const init  = Number(initiative    ?? 0);
+  const auto  = Number(autoScore     ?? 0);
+  const final = Math.min(auto + comm + team + disc + init, 100);
+
+  // Determine status and whether to set finalized_at
+  const newStatus    = saveDraft ? 'draft' : 'finalized';
+  const finalizedAt  = saveDraft ? null : new Date();
 
   try {
     const existing = await query('SELECT id FROM kpis WHERE user_id = ?', [userId]);
     if (existing.length === 0) {
-      await query(
-        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
-        [userId, auto, comm, team, disc, init]
-      );
+      // New KPI row — never include final_score in INSERT if it is a generated column.
+      // We insert the component columns; MySQL computes final_score automatically.
+      // If final_score is NOT generated in this DB, we also set it explicitly.
+      if (saveDraft) {
+        await query(
+          `INSERT INTO kpis
+             (user_id, auto_score, communication, teamwork, discipline, initiative, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
+          [userId, auto, comm, team, disc, init]
+        );
+      } else {
+        await query(
+          `INSERT INTO kpis
+             (user_id, auto_score, communication, teamwork, discipline, initiative, status, finalized_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'finalized', NOW())`,
+          [userId, auto, comm, team, disc, init]
+        );
+      }
     } else {
-      await query(
-        `UPDATE kpis SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
-         updated_at=NOW() WHERE user_id=?`,
-        [auto, comm, team, disc, init, userId]
-      );
-    }
-    // Notify Team Lead if override reason supplied
-    if (overrideReason) {
-      const userRows = await query('SELECT team_id FROM users WHERE id=?', [userId]);
-      const teamId   = userRows[0]?.team_id;
-      if (teamId) {
-        const tlRows = await query('SELECT lead_id FROM teams WHERE id=?', [teamId]);
-        const tlId   = tlRows[0]?.lead_id;
-        if (tlId) {
-          await query(
-            `INSERT INTO notifications (user_id, message) VALUES (?, ?)`,
-            [tlId, `Manager overrode KPI for an employee. Reason: ${overrideReason}`]
-          ).catch(() => {});
-        }
+      // Update existing row — do NOT include final_score in SET (it is generated)
+      if (saveDraft) {
+        await query(
+          `UPDATE kpis
+           SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
+               status='draft', updated_at=NOW()
+           WHERE user_id=?`,
+          [auto, comm, team, disc, init, userId]
+        );
+      } else {
+        await query(
+          `UPDATE kpis
+           SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
+               status='finalized', finalized_at=NOW(), updated_at=NOW()
+           WHERE user_id=?`,
+          [auto, comm, team, disc, init, userId]
+        );
       }
     }
-    // Return the generated final_score so the UI can show it
-    const updated = await query('SELECT final_score FROM kpis WHERE user_id=?', [userId]);
-    res.json({ message: 'KPI saved.', finalScore: updated[0]?.final_score ?? 0 });
-    res.json({ message: 'KPI saved.' });
+    res.json({ message: saveDraft ? 'KPI saved as draft.' : 'KPI finalized.', finalScore: final });
   } catch (err) {
+    console.error('manager/kpi/assign error:', err.message);
     res.status(500).json({ message: err.message });
   }
 });
 
 // POST /api/manager/teamlead/evaluate  – evaluate a team lead (manual scores)
+// saveDraft=true  → status = 'draft'
+// saveDraft=false → status = 'finalized'
 app.post('/api/manager/teamlead/evaluate', verifyToken, requireManager, async (req, res) => {
-  const { teamLeadId, communication, teamwork, discipline, initiative } = req.body;
+  const { teamLeadId, communication, teamwork, discipline, initiative, saveDraft } = req.body;
   if (!teamLeadId) return res.status(400).json({ message: 'teamLeadId is required' });
 
-  const comm = communication ?? 0;
-  const team = teamwork      ?? 0;
-  const disc = discipline    ?? 0;
-  const init = initiative    ?? 0;
-  const comm  = communication ?? 0;
-  const team  = teamwork      ?? 0;
-  const disc  = discipline    ?? 0;
-  const init  = initiative    ?? 0;
+  const comm  = Number(communication ?? 0);
+  const team  = Number(teamwork      ?? 0);
+  const disc  = Number(discipline    ?? 0);
+  const init  = Number(initiative    ?? 0);
 
   try {
-    const existing = await query('SELECT id FROM kpis WHERE user_id=?', [teamLeadId]);
+    // Fetch existing auto_score (if any) to preserve it
+    const existing = await query('SELECT id, auto_score FROM kpis WHERE user_id=?', [teamLeadId]);
+    const auto  = Number(existing[0]?.auto_score ?? 0);
+    const final = Math.min(auto + comm + team + disc + init, 100);
+
     if (existing.length === 0) {
-      await query(
-        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative)
-         VALUES (?, 0, ?, ?, ?, ?)`,
-        `INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, status)
-         VALUES (?, 0, ?, ?, ?, ?, 'draft')`,
-        [teamLeadId, comm, team, disc, init]
-      );
+      if (saveDraft) {
+        await query(
+          `INSERT INTO kpis
+             (user_id, auto_score, communication, teamwork, discipline, initiative, status)
+           VALUES (?, 0, ?, ?, ?, ?, 'draft')`,
+          [teamLeadId, comm, team, disc, init]
+        );
+      } else {
+        await query(
+          `INSERT INTO kpis
+             (user_id, auto_score, communication, teamwork, discipline, initiative, status, finalized_at)
+           VALUES (?, 0, ?, ?, ?, ?, 'finalized', NOW())`,
+          [teamLeadId, comm, team, disc, init]
+        );
+      }
     } else {
-      await query(
-        `UPDATE kpis SET communication=?, teamwork=?, discipline=?, initiative=?,
-         updated_at=NOW() WHERE user_id=?`,
-        [comm, team, disc, init, teamLeadId]
-      );
+      if (saveDraft) {
+        await query(
+          `UPDATE kpis
+           SET communication=?, teamwork=?, discipline=?, initiative=?,
+               status='draft', updated_at=NOW()
+           WHERE user_id=?`,
+          [comm, team, disc, init, teamLeadId]
+        );
+      } else {
+        await query(
+          `UPDATE kpis
+           SET communication=?, teamwork=?, discipline=?, initiative=?,
+               status='finalized', finalized_at=NOW(), updated_at=NOW()
+           WHERE user_id=?`,
+          [comm, team, disc, init, teamLeadId]
+        );
+      }
     }
-    res.json({ message: 'Team Lead evaluated.' });
+    res.json({ message: saveDraft ? 'Team Lead KPI saved as draft.' : 'Team Lead evaluated.', finalScore: final });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -768,3 +808,51 @@ app.post("/api/chat", verifyToken, async (req, res) => {
 // ─────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

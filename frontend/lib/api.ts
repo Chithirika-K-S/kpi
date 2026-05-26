@@ -238,6 +238,7 @@ export interface ManagerKpiPayload {
   teamwork: number;
   discipline: number;
   initiative: number;
+  saveDraft?: boolean;
   overrideReason?: string;
 }
 
@@ -247,4 +248,5 @@ export interface EvaluateLeadPayload {
   teamwork: number;
   discipline: number;
   initiative: number;
+  saveDraft?: boolean;
 }
