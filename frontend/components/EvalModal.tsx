@@ -137,16 +137,17 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
               ))}
             </div>
 
-            {detail?.finalKpi?.status === "finalized" && (
+            {detail?.finalKpi?.status === 'finalized' && (
               <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
                 <div className="flex items-center gap-2 text-emerald-700 text-sm font-medium">
                   <CheckCircle size={15} />
-                  KPI finalized{detail.finalKpi.finalized_at ? ` on ${new Date(detail.finalKpi.finalized_at).toLocaleDateString()}` : ""}
+                  KPI Finalized{detail.finalKpi.finalized_at ? ` · ${new Date(detail.finalKpi.finalized_at).toLocaleDateString()}` : ''}
                 </div>
                 {!editMode && (
                   <button
                     onClick={() => setEditMode(true)}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-white border border-emerald-300 hover:border-emerald-500 px-3 py-1.5 rounded-lg transition-all"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-900
+                               bg-white border border-emerald-300 hover:border-emerald-500 px-3 py-1.5 rounded-lg transition-all"
                   >
                     <Pencil size={12} /> Edit KPI
                   </button>
@@ -243,36 +244,38 @@ export default function EvalModal({ member, teamLeadId, periodId, onClose, onSav
               </div>
             )}
 
-            {/* Actions – matches login button style */}
+            {/* Actions — Save Draft | Save KPI (Finalize) */}
             {(!isFinalized || editMode) && (
               <div className="flex gap-3 pt-1">
                 {editMode && (
                   <button
-                    onClick={() => { setEditMode(false); }}
+                    onClick={() => setEditMode(false)}
                     className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-300
                                text-slate-500 rounded-xl text-sm font-semibold transition-all shadow-sm"
                   >
                     <X size={15} /> Cancel
                   </button>
                 )}
+                {/* Save Draft → status = 'draft' in DB */}
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-300
-                             text-slate-700 rounded-xl text-sm font-semibold transition-all shadow-sm disabled:opacity-50"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 hover:bg-amber-100 border border-amber-300
+                             text-amber-700 rounded-xl text-sm font-semibold transition-all shadow-sm disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
                   Save Draft
                 </button>
+                {/* Save KPI → status = 'finalized' in DB */}
                 <button
                   onClick={handleFinalize}
                   disabled={finalizing || !allFilled}
-                  title={!allFilled ? "Fill in all criteria scores first" : ""}
+                  title={!allFilled ? 'Fill in all criteria scores first' : ''}
                   className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white
                              rounded-xl text-sm font-semibold transition-all shadow-sm disabled:opacity-50 active:scale-[0.98]"
                 >
                   {finalizing ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />}
-                  {editMode ? "Re-finalize KPI" : "Finalize KPI"}
+                  Save KPI
                 </button>
               </div>
             )}

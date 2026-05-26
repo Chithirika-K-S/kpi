@@ -390,7 +390,8 @@ app.post("/api/team/evaluation", verifyToken, async (req, res) => {
   const colMap = { 1: "communication", 2: "teamwork", 3: "discipline", 4: "initiative" };
 
   try {
-    const existing = await query("SELECT id FROM kpis WHERE user_id = ?", [employeeId]);
+    // Always fetch the existing row so we can reuse the correct auto_score
+    const existing = await query("SELECT id, auto_score FROM kpis WHERE user_id = ?", [employeeId]);
     console.log("[evaluation] existing rows:", existing.length);
 
     const updates = {};
@@ -403,28 +404,33 @@ app.post("/api/team/evaluation", verifyToken, async (req, res) => {
     const team = updates["teamwork"]      ?? 0;
     const disc = updates["discipline"]    ?? 0;
     const init = updates["initiative"]    ?? 0;
+    const tlSum = comm + team + disc + init;
     console.log("[evaluation] scores: comm=", comm, "team=", team, "disc=", disc, "init=", init);
 
     if (existing.length === 0) {
-      console.log("[evaluation] INSERTing new row...");
+      // No KPI row yet — insert with auto_score = 0 (will be set when system score is assigned)
+      console.log("[evaluation] INSERTing new row (auto_score=0, no system score assigned yet)...");
       await query(
         `INSERT INTO kpis
            (user_id, auto_score, communication, teamwork, discipline, initiative,
             lead_score, final_score, status)
          VALUES (?, 0, ?, ?, ?, ?, ?, ?, 'draft')`,
-        [employeeId, comm, team, disc, init, comm+team+disc+init, comm+team+disc+init]
+        [employeeId, comm, team, disc, init, tlSum, tlSum]
       );
       console.log("[evaluation] INSERT done");
     } else {
-      console.log("[evaluation] UPDATing existing row...");
+      // Reuse the stored auto_score — never reset it to 0
+      const autoScore = parseFloat(existing[0].auto_score ?? 0);
+      const finalScore = autoScore + tlSum;
+      console.log("[evaluation] UPDATing existing row. autoScore=", autoScore, "tlSum=", tlSum, "finalScore=", finalScore);
       const result = await query(
         `UPDATE kpis
          SET communication = ?, teamwork = ?, discipline = ?, initiative = ?,
-             lead_score  = ? + ? + ? + ?,
-             final_score = auto_score + (? + ? + ? + ?),
+             lead_score  = ?,
+             final_score = ?,
              status = 'draft', updated_at = NOW()
          WHERE user_id = ?`,
-        [comm, team, disc, init, comm, team, disc, init, comm, team, disc, init, employeeId]
+        [comm, team, disc, init, tlSum, finalScore, employeeId]
       );
       console.log("[evaluation] UPDATE done. affectedRows=", result.affectedRows);
     }
@@ -971,51 +977,3 @@ app.post("/api/chat", verifyToken, async (req, res) => {
 // ─────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

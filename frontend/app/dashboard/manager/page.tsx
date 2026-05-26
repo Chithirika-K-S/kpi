@@ -11,75 +11,80 @@ import {
 type Tab = 'analytics' | 'employees' | 'teamleads';
 type StatusFilter = 'All' | 'Finalized' | 'Draft' | 'Pending';
 
-// ─── Tiny inline bar chart (pure SVG, no deps) ────────────────────
-function BarChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
-  const max = Math.max(...data.map(d => Number(d.avg_score)), 1);
+// ─── Tiny inline LINE chart (pure SVG) ───────────────────────────
+function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
+  const W = 560; const H = 140; const PAD = { top: 16, right: 12, bottom: 20, left: 28 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top  - PAD.bottom;
+  const scores = data.map(d => Number(d.avg_score));
+  const minVal = 0; const maxVal = 100;
+
+  if (data.length === 0) return (
+    <div className="flex items-center justify-center" style={{ height: H }}>
+      <p className="text-slate-400 text-sm">No data available yet.</p>
+    </div>
+  );
+
+  // Map a score to SVG y-coordinate
+  const toY = (v: number) => PAD.top + chartH - ((v - minVal) / (maxVal - minVal)) * chartH;
+  // Map an index to SVG x-coordinate
+  const toX = (i: number) => PAD.left + (data.length === 1 ? chartW / 2 : (i / (data.length - 1)) * chartW);
+
+  const points = scores.map((v, i) => `${toX(i)},${toY(v)}`).join(' ');
+  const areaPoints = [
+    `${toX(0)},${toY(minVal)}`,
+    ...scores.map((v, i) => `${toX(i)},${toY(v)}`),
+    `${toX(scores.length - 1)},${toY(minVal)}`,
+  ].join(' ');
+
   return (
     <div className="w-full">
-      {/* Y-axis labels + bars */}
-      <div className="flex gap-2">
-        {/* Y-axis */}
-        <div className="flex flex-col justify-between text-[9px] text-slate-400 pr-1 pb-6" style={{ height: 160 }}>
-          <span>100</span>
-          <span>75</span>
-          <span>50</span>
-          <span>25</span>
-          <span>0</span>
-        </div>
-        {/* Bars */}
-        <div className="flex-1 flex flex-col gap-1">
-          {/* Grid lines */}
-          <div className="relative flex items-end gap-1.5" style={{ height: 140 }}>
-            {[100, 75, 50, 25].map(v => (
-              <div
-                key={v}
-                className="absolute w-full border-t border-dashed border-slate-100"
-                style={{ bottom: `${v}%` }}
-              />
-            ))}
-            {data.map((d, i) => {
-              const pct = (Number(d.avg_score) / 100) * 100;
-              return (
-                <div key={i} className="flex-1 flex flex-col justify-end items-center group relative h-full">
-                  {/* Hover tooltip */}
-                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-10 shadow-lg">
-                    {d.avg_score}/100
-                  </div>
-                  <div
-                    className="w-full rounded-t-md transition-all duration-500 cursor-default"
-                    style={{
-                      height    : `${pct}%`,
-                      minHeight : 4,
-                      background: `linear-gradient(to top, #6d28d9, #818cf8)`,
-                    }}
-                  />
-                </div>
-              );
-            })}
-            {data.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <p className="text-slate-400 text-sm">No data available yet.</p>
-              </div>
-            )}
-          </div>
-          {/* X-axis labels */}
-          <div className="flex gap-1.5">
-            {data.map((d, i) => (
-              <div key={i} className="flex-1 text-center">
-                <span className="text-[8px] text-slate-400 block leading-tight">
-                  {d.month_label.split(' ')[0]}
-                </span>
-                <span className="text-[7px] text-slate-300 block">
-                  {d.month_label.split(' ')[1]}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H + 24 }} overflow="visible">
+        {/* Grid lines */}
+        {[0, 25, 50, 75, 100].map(v => (
+          <g key={v}>
+            <line
+              x1={PAD.left} y1={toY(v)} x2={PAD.left + chartW} y2={toY(v)}
+              stroke="#f1f5f9" strokeWidth={1} strokeDasharray={v === 0 ? '0' : '4,3'}
+            />
+            <text x={PAD.left - 4} y={toY(v) + 3.5} textAnchor="end" fontSize={8} fill="#94a3b8">{v}</text>
+          </g>
+        ))}
+        {/* Gradient fill under line */}
+        <defs>
+          <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stopColor="#6d28d9" stopOpacity={0.18} />
+            <stop offset="100%" stopColor="#6d28d9" stopOpacity={0.01} />
+          </linearGradient>
+        </defs>
+        <polygon points={areaPoints} fill="url(#lineGrad)" />
+        {/* Line */}
+        <polyline points={points} fill="none" stroke="#6d28d9" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
+        {/* Data points + tooltips */}
+        {scores.map((v, i) => (
+          <g key={i} className="group">
+            <circle cx={toX(i)} cy={toY(v)} r={5} fill="white" stroke="#6d28d9" strokeWidth={2} />
+            {/* Tooltip box */}
+            <g transform={`translate(${toX(i)},${toY(v) - 22})`}>
+              <rect x={-18} y={-10} width={36} height={16} rx={4} fill="#1e293b"
+                opacity={0} className="group-hover-opacity-100" />
+              <text textAnchor="middle" fontSize={9} fill="white" dy={2}
+                opacity={0} className="group-hover-opacity-100">
+                {v}
+              </text>
+            </g>
+          </g>
+        ))}
+        {/* X-axis labels */}
+        {data.map((d, i) => (
+          <text key={i} x={toX(i)} y={H + 10} textAnchor="middle" fontSize={8} fill="#94a3b8">
+            {d.month_label.split(' ')[0]}
+          </text>
+        ))}
+      </svg>
       {/* Legend */}
-      <div className="flex items-center gap-2 mt-3">
-        <div className="w-3 h-3 rounded-sm" style={{ background: 'linear-gradient(to top, #6d28d9, #818cf8)' }} />
+      <div className="flex items-center gap-2 mt-1">
+        <div className="w-6 h-0.5 bg-violet-600 rounded" />
         <span className="text-xs text-slate-500">{label}</span>
       </div>
     </div>
@@ -146,51 +151,67 @@ function MetricRow({
 }
 
 // ─────────────────────────────────────────────────────────────────
-// KPI Modal  (Evaluate KPI = Pending/Draft  |  Edit KPI = Finalized)
+// KPI Modal  — Evaluate KPI (Pending/Draft) | Edit KPI (Finalized)
+// Two action buttons: Save Draft  |  Save KPI (Finalize)
 // ─────────────────────────────────────────────────────────────────
 interface KpiModalProps {
   person: EmployeeRow | TeamLeadRow;
-  mode: 'evaluate' | 'edit';       // evaluate = pending/draft, edit = finalized
+  mode: 'evaluate' | 'edit';
   onClose: () => void;
   onSaved: () => void;
 }
 
 function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
-  // Parse everything as integers upfront to avoid float arithmetic issues
-  const [autoScore,     setAutoScore]     = useState(Math.round(Number(person.auto_score)      ?? 0));
-  const [communication, setCommunication] = useState(Math.round(Number(person.communication)  ?? 0));
-  const [teamwork,      setTeamwork]      = useState(Math.round(Number(person.teamwork)        ?? 0));
-  const [discipline,    setDiscipline]    = useState(Math.round(Number(person.discipline)      ?? 0));
-  const [initiative,    setInitiative]    = useState(Math.round(Number(person.initiative)      ?? 0));
-  const [saving,        setSaving]        = useState(false);
+  const [autoScore,     setAutoScore]     = useState(Math.round(Number(person.auto_score)     || 0));
+  const [communication, setCommunication] = useState(Math.round(Number(person.communication) || 0));
+  const [teamwork,      setTeamwork]      = useState(Math.round(Number(person.teamwork)       || 0));
+  const [discipline,    setDiscipline]    = useState(Math.round(Number(person.discipline)     || 0));
+  const [initiative,    setInitiative]    = useState(Math.round(Number(person.initiative)     || 0));
+  const [saving,        setSaving]        = useState<'draft' | 'finalize' | null>(null);
   const [err,           setErr]           = useState('');
 
-  // Integer arithmetic only – no floating point surprises
+  // Integer arithmetic only – no float surprises
   const leadScore  = communication + teamwork + discipline + initiative;  // 0–20
   const finalScore = Math.min(autoScore + leadScore, 100);                // 0–100
 
-  const handleSave = async () => {
-    setSaving(true); setErr('');
+  const isEmployee = 'team_name' in person && 'team_lead_name' in person;
+
+  const handleSave = async (saveDraft: boolean) => {
+    setSaving(saveDraft ? 'draft' : 'finalize');
+    setErr('');
     try {
-      await api.managerAssignKpi({
-        userId       : person.id,
-        autoScore,
-        communication,
-        teamwork,
-        discipline,
-        initiative,
-      });
+      if (isEmployee) {
+        // Employee → use managerAssignKpi
+        await api.managerAssignKpi({
+          userId       : person.id,
+          autoScore,
+          communication,
+          teamwork,
+          discipline,
+          initiative,
+          saveDraft,
+        });
+      } else {
+        // Team Lead → use managerEvaluateTeamLead
+        await api.managerEvaluateTeamLead({
+          teamLeadId   : person.id,
+          communication,
+          teamwork,
+          discipline,
+          initiative,
+          saveDraft,
+        });
+      }
       onSaved();
       onClose();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : 'Failed to save.');
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
   };
 
-  const title     = mode === 'evaluate' ? 'Evaluate KPI' : 'Edit KPI';
-  const btnColor  = 'bg-indigo-600 hover:bg-indigo-700';
+  const title = mode === 'evaluate' ? 'Evaluate KPI' : 'Edit KPI';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
@@ -207,24 +228,25 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
 
         <div className="space-y-5">
 
-          {/* System score (out of 80) */}
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">System Score (out of 80)</p>
-            <div className="flex items-center gap-4">
-              <input
-                type="number" min={0} max={80}
-                value={autoScore}
-                onChange={e => setAutoScore(Math.min(80, Math.max(0, Math.round(Number(e.target.value)))))}
-                className="w-24 border border-slate-200 rounded-lg px-3 py-2 text-sm text-center font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              />
-              <span className="text-sm text-slate-400">/ 80</span>
-              <div className="flex-1 bg-slate-100 rounded-full h-2">
-                <div className="h-full bg-indigo-400 rounded-full transition-all" style={{ width: `${(autoScore / 80) * 100}%` }} />
+          {/* System score — only editable for employees */}
+          {isEmployee && (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">System Score (out of 80)</p>
+              <div className="flex items-center gap-4">
+                <input
+                  type="number" min={0} max={80} value={autoScore}
+                  onChange={e => setAutoScore(Math.min(80, Math.max(0, Math.round(Number(e.target.value)))))}
+                  className="w-24 border border-slate-200 rounded-lg px-3 py-2 text-sm text-center font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+                <span className="text-sm text-slate-400">/ 80</span>
+                <div className="flex-1 bg-slate-100 rounded-full h-2">
+                  <div className="h-full bg-indigo-400 rounded-full transition-all" style={{ width: `${(autoScore / 80) * 100}%` }} />
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Manual metrics (out of 20 total) */}
+          {/* Manual metrics */}
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Manual Evaluation — <span className="text-indigo-600">{leadScore}/20</span>
@@ -237,7 +259,7 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
             </div>
           </div>
 
-          {/* Live final score preview */}
+          {/* Final score preview */}
           <div className="flex items-center justify-between bg-indigo-50 rounded-xl px-4 py-3">
             <div>
               <p className="text-sm text-slate-600">Calculated Final KPI</p>
@@ -250,21 +272,38 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
 
           {err && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
 
+          {/* Action buttons */}
           <div className="flex gap-3 pt-1">
             <button
               onClick={onClose}
-              className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition"
+              disabled={saving !== null}
+              className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
             >
               Cancel
             </button>
+            {/* Save Draft → status = 'draft' */}
             <button
-              onClick={handleSave}
-              disabled={saving}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50 ${btnColor}`}
+              onClick={() => handleSave(true)}
+              disabled={saving !== null}
+              className="flex-1 py-2 rounded-xl text-sm font-semibold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save KPI'}
+              {saving === 'draft' ? 'Saving…' : 'Save Draft'}
+            </button>
+            {/* Save KPI → status = 'finalized' */}
+            <button
+              onClick={() => handleSave(false)}
+              disabled={saving !== null}
+              className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition disabled:opacity-50"
+            >
+              {saving === 'finalize' ? 'Saving…' : 'Save KPI'}
             </button>
           </div>
+
+          {/* Status hint */}
+          <p className="text-[10px] text-slate-400 text-center">
+            <span className="text-amber-600 font-medium">Save Draft</span> sets status to Draft &nbsp;·&nbsp;
+            <span className="text-indigo-600 font-medium">Save KPI</span> sets status to Finalized
+          </p>
         </div>
       </div>
     </div>
@@ -607,7 +646,7 @@ export default function ManagerDashboard() {
                     <div className="w-7 h-7 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin" />
                   </div>
                 ) : (
-                  <BarChart
+                  <LineChart
                     data={chartData}
                     label={
                       chartFilter === 'all'

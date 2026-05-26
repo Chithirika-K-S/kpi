@@ -82,9 +82,11 @@ export default function LeadDashboard() {
       m.email.toLowerCase().includes(search.toLowerCase()) ||
       (m.department ?? "").toLowerCase().includes(search.toLowerCase());
 
+    // Compare both sides in lowercase so 'Finalized' and 'finalized' both match
+    const dbStatus = (m.kpi_status ?? "pending").toLowerCase();
     const matchFilter =
       filter === "all" ? true
-      : m.kpi_status === filter;
+      : dbStatus === filter.toLowerCase();
 
     return matchSearch && matchFilter;
   });

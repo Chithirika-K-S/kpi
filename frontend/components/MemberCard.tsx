@@ -23,15 +23,12 @@ export default function MemberCard({ member, teamLeadId, onEvaluate, onUpdated }
   const [email,   setEmail]   = useState(member.email);
   const [saving,  setSaving]  = useState(false);
 
-  // Normalise to lowercase. If the DB still has stale 'pending' but final_score
-  // exists the effective status is 'finalized' — the backend migration will fix
-  // the DB on next restart, but this guards the UI immediately.
-  const rawStatus = (member.kpi_status ?? "pending").toLowerCase();
+  // Normalise status purely from DB value — no guessing from scores
+  const rawStatus = (member.kpi_status ?? 'pending').toLowerCase();
   const statusKey =
-    rawStatus === "finalized" ? "finalized"
-    : rawStatus === "draft"   ? "draft"
-    : parseFloat(member.final_score ?? 0) > 0 ? "finalized"  // stale-pending guard
-    : "pending";
+    rawStatus === 'finalized' ? 'finalized'
+    : rawStatus === 'draft'   ? 'draft'
+    : 'pending';
   const { label, color, bg, Icon } = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.pending;
 
   const completionRatio = parseInt(member.submitted_criteria ?? 0) / parseInt(member.total_criteria ?? 1);
@@ -174,16 +171,16 @@ export default function MemberCard({ member, teamLeadId, onEvaluate, onUpdated }
         </div>
       </div>
 
-      {/* Evaluate button – matches login's blue primary button */}
+      {/* Action button — purely driven by DB status */}
       <button
         onClick={() => onEvaluate(member)}
         className={`mt-4 w-full py-2.5 rounded-xl text-sm font-semibold transition-all shadow-sm ${
-          statusKey === "finalized"
-            ? "bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200"
-            : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]"
+          statusKey === 'finalized'
+            ? 'bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200'
+            : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]'
         }`}
       >
-        {statusKey === "finalized" ? "Edit KPI" : "Assign KPI (20%)"}
+        {statusKey === 'finalized' ? 'Edit KPI' : 'Evaluate KPI'}
       </button>
     </div>
   );
