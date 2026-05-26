@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   api, User, ManagerStats, MonthlyKpi, TeamKpi,
-  EmployeeRow, TeamLeadRow, TeamOption, ManagerKpiPayload, EvaluateLeadPayload
+  EmployeeRow, TeamLeadRow, TeamOption, KpiMetric
 } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -25,9 +25,7 @@ function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
     </div>
   );
 
-  // Map a score to SVG y-coordinate
   const toY = (v: number) => PAD.top + chartH - ((v - minVal) / (maxVal - minVal)) * chartH;
-  // Map an index to SVG x-coordinate
   const toX = (i: number) => PAD.left + (data.length === 1 ? chartW / 2 : (i / (data.length - 1)) * chartW);
 
   const points = scores.map((v, i) => `${toX(i)},${toY(v)}`).join(' ');
@@ -40,7 +38,6 @@ function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
   return (
     <div className="w-full">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H + 24 }} overflow="visible">
-        {/* Grid lines */}
         {[0, 25, 50, 75, 100].map(v => (
           <g key={v}>
             <line
@@ -50,7 +47,6 @@ function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
             <text x={PAD.left - 4} y={toY(v) + 3.5} textAnchor="end" fontSize={8} fill="#94a3b8">{v}</text>
           </g>
         ))}
-        {/* Gradient fill under line */}
         <defs>
           <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%"  stopColor="#6d28d9" stopOpacity={0.18} />
@@ -58,13 +54,10 @@ function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
           </linearGradient>
         </defs>
         <polygon points={areaPoints} fill="url(#lineGrad)" />
-        {/* Line */}
         <polyline points={points} fill="none" stroke="#6d28d9" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
-        {/* Data points + tooltips */}
         {scores.map((v, i) => (
           <g key={i} className="group">
             <circle cx={toX(i)} cy={toY(v)} r={5} fill="white" stroke="#6d28d9" strokeWidth={2} />
-            {/* Tooltip box */}
             <g transform={`translate(${toX(i)},${toY(v) - 22})`}>
               <rect x={-18} y={-10} width={36} height={16} rx={4} fill="#1e293b"
                 opacity={0} className="group-hover-opacity-100" />
@@ -75,14 +68,12 @@ function LineChart({ data, label }: { data: MonthlyKpi[]; label: string }) {
             </g>
           </g>
         ))}
-        {/* X-axis labels */}
         {data.map((d, i) => (
           <text key={i} x={toX(i)} y={H + 10} textAnchor="middle" fontSize={8} fill="#94a3b8">
             {d.month_label.split(' ')[0]}
           </text>
         ))}
       </svg>
-      {/* Legend */}
       <div className="flex items-center gap-2 mt-1">
         <div className="w-6 h-0.5 bg-violet-600 rounded" />
         <span className="text-xs text-slate-500">{label}</span>
@@ -151,56 +142,46 @@ function MetricRow({
 }
 
 // ─────────────────────────────────────────────────────────────────
-// KPI Modal  — Evaluate KPI (Pending/Draft) | Edit KPI (Finalized)
-// Two action buttons: Save Draft  |  Save KPI (Finalize)
+// KPI Modal  — dynamic metrics from kpi_metrics table
 // ─────────────────────────────────────────────────────────────────
 interface KpiModalProps {
   person: EmployeeRow | TeamLeadRow;
   mode: 'evaluate' | 'edit';
+  metrics: KpiMetric[];
   onClose: () => void;
   onSaved: () => void;
 }
 
-function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
-  const [autoScore,     setAutoScore]     = useState(Math.round(Number(person.auto_score)     || 0));
-  const [communication, setCommunication] = useState(Math.round(Number(person.communication) || 0));
-  const [teamwork,      setTeamwork]      = useState(Math.round(Number(person.teamwork)       || 0));
-  const [discipline,    setDiscipline]    = useState(Math.round(Number(person.discipline)     || 0));
-  const [initiative,    setInitiative]    = useState(Math.round(Number(person.initiative)     || 0));
-  const [saving,        setSaving]        = useState<'draft' | 'finalize' | null>(null);
-  const [err,           setErr]           = useState('');
-
-  // Integer arithmetic only – no float surprises
-  const leadScore  = communication + teamwork + discipline + initiative;  // 0–20
-  const finalScore = Math.min(autoScore + leadScore, 100);                // 0–100
-
+function KpiModal({ person, mode, metrics, onClose, onSaved }: KpiModalProps) {
   const isEmployee = 'team_name' in person && 'team_lead_name' in person;
+
+  const legacyCols = ['communication', 'teamwork', 'discipline', 'initiative'] as const;
+  const [autoScore, setAutoScore] = useState(Math.round(Number(person.auto_score) || 0));
+  const [scores, setScores] = useState<Record<number, number>>(() => {
+    const init: Record<number, number> = {};
+    metrics.forEach((m, idx) => {
+      const col = legacyCols[idx];
+      const existing = col ? Math.round(Number((person as any)[col]) || 0) : 0;
+      init[m.id] = existing;
+    });
+    return init;
+  });
+  const [saving, setSaving] = useState<'draft' | 'finalize' | null>(null);
+  const [err,    setErr]    = useState('');
+
+  const totalMaxManual = metrics.reduce((s, m) => s + m.max_score, 0);
+  const leadScore  = metrics.reduce((s, m) => s + (scores[m.id] ?? 0), 0);
+  const finalScore = Math.min(autoScore + leadScore, 100);
 
   const handleSave = async (saveDraft: boolean) => {
     setSaving(saveDraft ? 'draft' : 'finalize');
     setErr('');
     try {
+      const metricScores = metrics.map(m => ({ metricId: m.id, score: scores[m.id] ?? 0 }));
       if (isEmployee) {
-        // Employee → use managerAssignKpi
-        await api.managerAssignKpi({
-          userId       : person.id,
-          autoScore,
-          communication,
-          teamwork,
-          discipline,
-          initiative,
-          saveDraft,
-        });
+        await api.managerAssignKpi({ userId: person.id, autoScore, metricScores, saveDraft });
       } else {
-        // Team Lead → use managerEvaluateTeamLead
-        await api.managerEvaluateTeamLead({
-          teamLeadId   : person.id,
-          communication,
-          teamwork,
-          discipline,
-          initiative,
-          saveDraft,
-        });
+        await api.managerEvaluateTeamLead({ teamLeadId: person.id, metricScores, saveDraft });
       }
       onSaved();
       onClose();
@@ -215,9 +196,8 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
 
-        {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <div>
             <h3 className="text-lg font-bold text-indigo-700">{title}</h3>
@@ -228,7 +208,6 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
 
         <div className="space-y-5">
 
-          {/* System score — only editable for employees */}
           {isEmployee && (
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">System Score (out of 80)</p>
@@ -246,24 +225,40 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
             </div>
           )}
 
-          {/* Manual metrics */}
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-              Manual Evaluation — <span className="text-indigo-600">{leadScore}/20</span>
+              Manual Evaluation &mdash; <span className="text-indigo-600">{leadScore}/{totalMaxManual}</span>
             </p>
-            <div className="space-y-3 bg-slate-50 rounded-xl p-4">
-              <MetricRow label="Communication" value={communication} max={5} onChange={v => setCommunication(Math.round(v))} />
-              <MetricRow label="Teamwork"      value={teamwork}      max={5} onChange={v => setTeamwork(Math.round(v))}      />
-              <MetricRow label="Discipline"    value={discipline}    max={5} onChange={v => setDiscipline(Math.round(v))}    />
-              <MetricRow label="Initiative"    value={initiative}    max={5} onChange={v => setInitiative(Math.round(v))}    />
-            </div>
+            {metrics.length === 0 ? (
+              <p className="text-sm text-slate-400 bg-slate-50 rounded-xl px-4 py-3">
+                No active KPI metrics configured. Ask your Admin to add metrics.
+              </p>
+            ) : (
+              <div className="space-y-3 bg-slate-50 rounded-xl p-4">
+                {metrics.map(m => (
+                  <div key={m.id} className="flex items-center gap-4">
+                    <span className="text-sm text-slate-700 w-36 shrink-0">{m.metric_name}</span>
+                    <input
+                      type="range" min={0} max={m.max_score} step={1}
+                      value={scores[m.id] ?? 0}
+                      onChange={e => setScores(prev => ({ ...prev, [m.id]: Number(e.target.value) }))}
+                      className="flex-1 accent-indigo-600"
+                    />
+                    <span className="text-sm font-bold text-indigo-700 w-14 text-right">
+                      {scores[m.id] ?? 0}/{m.max_score}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Final score preview */}
           <div className="flex items-center justify-between bg-indigo-50 rounded-xl px-4 py-3">
             <div>
               <p className="text-sm text-slate-600">Calculated Final KPI</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">{autoScore} (system) + {leadScore} (manual)</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {isEmployee ? `${autoScore} (system) + ` : ''}{leadScore} (manual)
+              </p>
             </div>
             <span className="text-2xl font-extrabold text-indigo-700">
               {finalScore}<span className="text-sm font-normal text-slate-400">/100</span>
@@ -272,112 +267,25 @@ function KpiModal({ person, mode, onClose, onSaved }: KpiModalProps) {
 
           {err && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
 
-          {/* Action buttons */}
           <div className="flex gap-3 pt-1">
             <button
-              onClick={onClose}
-              disabled={saving !== null}
+              onClick={onClose} disabled={saving !== null}
               className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            {/* Save Draft → status = 'draft' */}
+            >Cancel</button>
             <button
-              onClick={() => handleSave(true)}
-              disabled={saving !== null}
+              onClick={() => handleSave(true)} disabled={saving !== null}
               className="flex-1 py-2 rounded-xl text-sm font-semibold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition disabled:opacity-50"
-            >
-              {saving === 'draft' ? 'Saving…' : 'Save Draft'}
-            </button>
-            {/* Save KPI → status = 'finalized' */}
+            >{saving === 'draft' ? 'Saving…' : 'Save Draft'}</button>
             <button
-              onClick={() => handleSave(false)}
-              disabled={saving !== null}
+              onClick={() => handleSave(false)} disabled={saving !== null}
               className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition disabled:opacity-50"
-            >
-              {saving === 'finalize' ? 'Saving…' : 'Save KPI'}
-            </button>
+            >{saving === 'finalize' ? 'Saving…' : 'Save KPI'}</button>
           </div>
 
-          {/* Status hint */}
           <p className="text-[10px] text-slate-400 text-center">
             <span className="text-amber-600 font-medium">Save Draft</span> sets status to Draft &nbsp;·&nbsp;
             <span className="text-indigo-600 font-medium">Save KPI</span> sets status to Finalized
           </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Team Lead Evaluate Modal
-// ─────────────────────────────────────────────────────────────────
-interface EvalModalProps {
-  lead: TeamLeadRow;
-  onClose: () => void;
-  onSaved: () => void;
-}
-
-function EvalModal({ lead, onClose, onSaved }: EvalModalProps) {
-  const [communication,setCommunication] = useState(lead.communication ?? 0);
-  const [teamwork,     setTeamwork]      = useState(lead.teamwork      ?? 0);
-  const [discipline,   setDiscipline]    = useState(lead.discipline    ?? 0);
-  const [initiative,   setInitiative]    = useState(lead.initiative    ?? 0);
-  const [saving,       setSaving]        = useState(false);
-  const [err,          setErr]           = useState('');
-
-  const totalManual = communication + teamwork + discipline + initiative;
-
-  const handleSave = async () => {
-    setSaving(true); setErr('');
-    try {
-      await api.managerEvaluateTeamLead({ teamLeadId: lead.id, communication, teamwork, discipline, initiative });
-      onSaved(); onClose();
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="text-lg font-bold text-violet-700">Evaluate Team Lead</h3>
-            <p className="text-sm text-slate-500">{lead.name} &middot; {lead.team_name ?? 'No Team'}</p>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
-        </div>
-
-    
-
-        <div className="space-y-4">
-          <div className="bg-slate-50 rounded-xl p-4 space-y-3">
-            <MetricRow label="Communication" value={communication} max={5} onChange={setCommunication} />
-            <MetricRow label="Teamwork"      value={teamwork}      max={5} onChange={setTeamwork}      />
-            <MetricRow label="Discipline"    value={discipline}    max={5} onChange={setDiscipline}    />
-            <MetricRow label="Initiative"    value={initiative}    max={5} onChange={setInitiative}    />
-          </div>
-
-          <div className="flex items-center justify-between bg-violet-50 rounded-xl px-4 py-3">
-            <span className="text-sm text-slate-600">Manual Score</span>
-            <span className="text-xl font-extrabold text-violet-700">{totalManual}<span className="text-sm font-normal text-slate-400">/20</span></span>
-          </div>
-
-          {err && <p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
-
-          <div className="flex gap-3">
-            <button onClick={onClose} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition">Cancel</button>
-            <button
-              onClick={handleSave} disabled={saving}
-              className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 transition disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : 'Submit Evaluation'}
-            </button>
-          </div>
         </div>
       </div>
     </div>
@@ -408,14 +316,14 @@ export default function ManagerDashboard() {
   const [tlSearch,      setTlSearch]      = useState('');
   const [tlStatus,      setTlStatus]      = useState<StatusFilter>('All');
 
-  // chart filter: 'all' | team_id as string
   const [chartFilter,   setChartFilter]   = useState<string>('all');
   const [chartLoading,  setChartLoading]  = useState(false);
   const [chartData,     setChartData]     = useState<MonthlyKpi[]>([]);
 
   // ── modals ────────────────────────────────────────
-  const [kpiModal,  setKpiModal]  = useState<{ person: EmployeeRow | TeamLeadRow; mode: 'evaluate' | 'edit' } | null>(null);
-  const [evalModal, setEvalModal] = useState<TeamLeadRow | null>(null);
+  // kpiModal drives the unified KpiModal for both employees and team leads
+  const [kpiModal,   setKpiModal]   = useState<{ person: EmployeeRow | TeamLeadRow; mode: 'evaluate' | 'edit' } | null>(null);
+  const [kpiMetrics, setKpiMetrics] = useState<KpiMetric[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const refresh = () => setDataVersion(v => v + 1);
 
@@ -441,22 +349,24 @@ export default function ManagerDashboard() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const [s, t, e, tl, teams] = await Promise.allSettled([
+      const [s, t, e, tl, teamsRes, metricsRes] = await Promise.allSettled([
         api.getManagerStats(),
         api.getManagerTeamAnalytics(),
         api.getManagerEmployees(),
         api.getManagerTeamLeads(),
         api.getManagerTeams(),
+        api.getManagerKpiMetrics(),
       ]);
-      if (s.status     === 'fulfilled') setStats(s.value);
-      if (t.status     === 'fulfilled') setTeamKpis(t.value.teams);
-      if (e.status     === 'fulfilled') setEmployees(e.value.employees);
-      if (tl.status    === 'fulfilled') setTeamLeads(tl.value.teamLeads);
-      if (teams.status === 'fulfilled') setTeams(teams.value.teams);
+      if (s.status         === 'fulfilled') setStats(s.value);
+      if (t.status         === 'fulfilled') setTeamKpis(t.value.teams);
+      if (e.status         === 'fulfilled') setEmployees(e.value.employees);
+      if (tl.status        === 'fulfilled') setTeamLeads(tl.value.teamLeads);
+      if (teamsRes.status  === 'fulfilled') setTeams(teamsRes.value.teams);
+      if (metricsRes.status === 'fulfilled') setKpiMetrics(metricsRes.value.metrics);
     })();
   }, [user, dataVersion]);
 
-  // ── Fetch chart data whenever filter changes or user loads ──
+  // ── Fetch chart data ──────────────────────────────
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -588,19 +498,14 @@ export default function ManagerDashboard() {
         {tab === 'analytics' && (
           <section className="space-y-5">
 
-            {/* Monthly trend card */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-
-              {/* Card header with filter pills */}
               <div className="px-6 pt-5 pb-4 border-b border-slate-100">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="text-base font-semibold text-slate-800">Monthly KPI Trend</h3>
                     <p className="text-xs text-slate-400 mt-0.5">Average KPI score over the last 12 months</p>
                   </div>
-                  {/* Filter pills */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Organisation-wide pill */}
                     <button
                       onClick={() => setChartFilter('all')}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
@@ -612,7 +517,6 @@ export default function ManagerDashboard() {
                       <span className="w-2 h-2 rounded-full bg-current opacity-70" />
                       Organisation
                     </button>
-                    {/* One pill per team */}
                     {teams.map((t, idx) => {
                       const colors = [
                         { active: 'bg-indigo-600 text-white border-indigo-600', dot: 'bg-white' },
@@ -639,7 +543,6 @@ export default function ManagerDashboard() {
                 </div>
               </div>
 
-              {/* Chart body */}
               <div className="px-6 py-5">
                 {chartLoading ? (
                   <div className="flex items-center justify-center" style={{ height: 180 }}>
@@ -657,11 +560,9 @@ export default function ManagerDashboard() {
                 )}
               </div>
 
-              {/* Footer stats row */}
               {!chartLoading && chartData.length > 0 && (() => {
                 const scores = chartData.map(d => Number(d.avg_score));
                 const peak   = Math.max(...scores);
-                const low    = Math.min(...scores);
                 const latest = scores[scores.length - 1];
                 const prev   = scores[scores.length - 2] ?? latest;
                 const trend  = latest >= prev ? '↑' : '↓';
@@ -684,17 +585,13 @@ export default function ManagerDashboard() {
               })()}
             </div>
 
-            {/* Team comparison + org distribution in a row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-              {/* Team breakdown */}
               <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800 mb-1">Team KPI Comparison</h3>
                 <p className="text-xs text-slate-400 mb-4">Average finalized KPI per team</p>
                 <TeamChart data={filteredTeamKpis} />
               </div>
 
-              {/* Distribution tiles */}
               <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800 mb-4">Organisation Performance</h3>
                 <div className="space-y-3">
@@ -707,10 +604,10 @@ export default function ManagerDashboard() {
                       ? Math.round(highPerformers.reduce((sum, e) => sum + Number(e.final_score), 0) / highPerformers.length)
                       : null;
                     return [
-                    { label: 'High Performers (80+)',  count: highPerformers.length, avg: highAvg,  color: 'bg-emerald-500' },
-                    { label: 'Average (50–79)',         count: avgPerformers.length,  avg: null,     color: 'bg-amber-400'  },
-                    { label: 'Below Target (<50)',      count: belowTarget.length,    avg: null,     color: 'bg-rose-500'   },
-                    { label: 'Not Yet Assigned',        count: notAssigned.length,    avg: null,     color: 'bg-slate-300'  },
+                      { label: 'High Performers (80+)',  count: highPerformers.length, avg: highAvg,  color: 'bg-emerald-500' },
+                      { label: 'Average (50–79)',         count: avgPerformers.length,  avg: null,     color: 'bg-amber-400'  },
+                      { label: 'Below Target (<50)',      count: belowTarget.length,    avg: null,     color: 'bg-rose-500'   },
+                      { label: 'Not Yet Assigned',        count: notAssigned.length,    avg: null,     color: 'bg-slate-300'  },
                     ];
                   })().map(d => {
                     const total = employees.length || 1;
@@ -735,7 +632,6 @@ export default function ManagerDashboard() {
                   })}
                 </div>
               </div>
-
             </div>
           </section>
         )}
@@ -744,7 +640,6 @@ export default function ManagerDashboard() {
         {tab === 'employees' && (
           <section className="space-y-4">
 
-            {/* Filters */}
             <div className="flex flex-wrap gap-3 items-center">
               <input
                 value={empSearch} onChange={e => setEmpSearch(e.target.value)}
@@ -770,7 +665,6 @@ export default function ManagerDashboard() {
               <span className="ml-auto text-xs text-slate-400">{filteredEmployees.length} results</span>
             </div>
 
-            {/* Table */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
@@ -883,7 +777,6 @@ export default function ManagerDashboard() {
                     </div>
                   </div>
 
-                  {/* Metric bars */}
                   <div className="space-y-1.5">
                     {[
                       { label: 'Communication', val: tl.communication },
@@ -923,19 +816,13 @@ export default function ManagerDashboard() {
 
       </main>
 
-      {/* ── Modals ─────────────────────────────────────────── */}
+      {/* ── Modal ──────────────────────────────────────────── */}
       {kpiModal && (
         <KpiModal
           person={kpiModal.person}
           mode={kpiModal.mode}
+          metrics={kpiMetrics}
           onClose={() => setKpiModal(null)}
-          onSaved={refresh}
-        />
-      )}
-      {evalModal && (
-        <EvalModal
-          lead={evalModal}
-          onClose={() => setEvalModal(null)}
           onSaved={refresh}
         />
       )}

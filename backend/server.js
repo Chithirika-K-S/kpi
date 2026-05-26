@@ -568,10 +568,25 @@ app.get('/api/manager/teamleads', verifyToken, requireManager, async (req, res) 
 });
 
 app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res) => {
-  const { userId, autoScore, communication, teamwork, discipline, initiative, saveDraft } = req.body;
+  const { userId, autoScore, metricScores = [], saveDraft } = req.body;
   if (!userId) return res.status(400).json({ message: 'userId is required' });
-  const comm = Number(communication ?? 0), team = Number(teamwork ?? 0), disc = Number(discipline ?? 0), init = Number(initiative ?? 0), auto = Number(autoScore ?? 0);
-  const lead = comm+team+disc+init, final = Math.min(auto+lead, 100);
+  const auto = Number(autoScore ?? 0);
+
+  // Fetch active metrics to map dynamic scores to legacy columns
+  const activeMetrics = await query(
+    'SELECT id, metric_name, max_score FROM kpi_metrics WHERE is_active = 1 ORDER BY id ASC'
+  );
+  const scoreMap = {};
+  for (const ms of metricScores) scoreMap[ms.metricId] = Number(ms.score ?? 0);
+  const totalManual = activeMetrics.reduce((sum, m) => sum + (scoreMap[m.id] ?? 0), 0);
+  const lead = totalManual, final = Math.min(auto + lead, 100);
+
+  // Map first 4 active metrics to legacy DB columns by position
+  const legacyKeys = ['communication', 'teamwork', 'discipline', 'initiative'];
+  const legacyVals = [0, 0, 0, 0];
+  activeMetrics.slice(0, 4).forEach((m, i) => { legacyVals[i] = scoreMap[m.id] ?? 0; });
+  const [comm, team, disc, init] = legacyVals;
+
   try {
     const existing = await query('SELECT id FROM kpis WHERE user_id = ?', [userId]);
     if (existing.length === 0) {
@@ -588,13 +603,26 @@ app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res
 });
 
 app.post('/api/manager/teamlead/evaluate', verifyToken, requireManager, async (req, res) => {
-  const { teamLeadId, communication, teamwork, discipline, initiative, saveDraft } = req.body;
+  const { teamLeadId, metricScores = [], saveDraft } = req.body;
   if (!teamLeadId) return res.status(400).json({ message: 'teamLeadId is required' });
-  const comm = Number(communication ?? 0), team = Number(teamwork ?? 0), disc = Number(discipline ?? 0), init = Number(initiative ?? 0);
-  const lead = comm+team+disc+init;
+
+  // Fetch active metrics to map dynamic scores to legacy columns
+  const activeMetrics = await query(
+    'SELECT id, metric_name, max_score FROM kpi_metrics WHERE is_active = 1 ORDER BY id ASC'
+  );
+  const scoreMap = {};
+  for (const ms of metricScores) scoreMap[ms.metricId] = Number(ms.score ?? 0);
+  const totalManual = activeMetrics.reduce((sum, m) => sum + (scoreMap[m.id] ?? 0), 0);
+  const lead = totalManual;
+
+  // Map first 4 active metrics to legacy DB columns by position
+  const legacyVals = [0, 0, 0, 0];
+  activeMetrics.slice(0, 4).forEach((m, i) => { legacyVals[i] = scoreMap[m.id] ?? 0; });
+  const [comm, team, disc, init] = legacyVals;
+
   try {
     const existing = await query('SELECT id, auto_score FROM kpis WHERE user_id=?', [teamLeadId]);
-    const auto = Number(existing[0]?.auto_score ?? 0), final = Math.min(auto+lead, 100);
+    const auto = Number(existing[0]?.auto_score ?? 0), final = Math.min(auto + lead, 100);
     if (existing.length === 0) {
       saveDraft
         ? await query(`INSERT INTO kpis (user_id,auto_score,communication,teamwork,discipline,initiative,lead_score,final_score,status) VALUES (?,0,?,?,?,?,?,?,'draft')`, [teamLeadId,comm,team,disc,init,lead,final])
@@ -719,9 +747,20 @@ app.get('/api/admin/metrics', verifyToken, requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
+// Public (any auth'd user) – active metrics only
 app.get('/api/metrics', verifyToken, async (req, res) => {
   try {
     res.json({ metrics: await query('SELECT * FROM kpi_metrics WHERE is_active = 1 ORDER BY id ASC') });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// Manager – active metrics for evaluation forms (same data, manager-scoped)
+app.get('/api/manager/kpi-metrics', verifyToken, requireManager, async (req, res) => {
+  try {
+    const metrics = await query(
+      'SELECT id, metric_name, max_score FROM kpi_metrics WHERE is_active = 1 ORDER BY id ASC'
+    );
+    res.json({ metrics });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
