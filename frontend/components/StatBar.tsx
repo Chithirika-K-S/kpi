@@ -6,10 +6,19 @@ interface Props { members: any[] }
 
 export default function StatBar({ members }: Props) {
   const total     = members.length;
-  const finalized = members.filter((m) => m.kpi_status === "finalized").length;
-  const draft     = members.filter((m) => m.kpi_status === "draft").length;
-  const pending   = members.filter((m) => m.kpi_status === "pending").length;
-  const scores    = members.filter((m) => m.final_score != null);
+  // Resolve effective status the same way MemberCard does:
+  // if DB has stale 'pending' but final_score > 0, treat as finalized.
+  const resolveStatus = (m: any): string => {
+    const raw = (m.kpi_status ?? "pending").toLowerCase();
+    if (raw === "finalized") return "finalized";
+    if (raw === "draft")     return "draft";
+    if (parseFloat(m.final_score ?? 0) > 0) return "finalized";
+    return "pending";
+  };
+  const finalized = members.filter((m) => resolveStatus(m) === "finalized").length;
+  const draft     = members.filter((m) => resolveStatus(m) === "draft").length;
+  const pending   = members.filter((m) => resolveStatus(m) === "pending").length;
+  const scores    = members.filter((m) => parseFloat(m.final_score ?? 0) > 0);
   const avg       = scores.length
     ? scores.reduce((s, m) => s + parseFloat(m.final_score), 0) / scores.length
     : null;

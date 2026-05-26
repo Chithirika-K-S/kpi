@@ -23,7 +23,15 @@ export default function MemberCard({ member, teamLeadId, onEvaluate, onUpdated }
   const [email,   setEmail]   = useState(member.email);
   const [saving,  setSaving]  = useState(false);
 
-  const statusKey = member.kpi_status ?? "pending";
+  // Normalise to lowercase. If the DB still has stale 'pending' but final_score
+  // exists the effective status is 'finalized' — the backend migration will fix
+  // the DB on next restart, but this guards the UI immediately.
+  const rawStatus = (member.kpi_status ?? "pending").toLowerCase();
+  const statusKey =
+    rawStatus === "finalized" ? "finalized"
+    : rawStatus === "draft"   ? "draft"
+    : parseFloat(member.final_score ?? 0) > 0 ? "finalized"  // stale-pending guard
+    : "pending";
   const { label, color, bg, Icon } = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.pending;
 
   const completionRatio = parseInt(member.submitted_criteria ?? 0) / parseInt(member.total_criteria ?? 1);

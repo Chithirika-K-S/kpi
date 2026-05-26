@@ -121,6 +121,25 @@ async function runMigrations() {
     //   finalized → TL finalized via POST /api/team/finalize-kpi
     // No automatic reset runs here.
 
+    // ── Migration 8: one-time recovery ─────────────────────────
+    // Rows that have final_score > 0 but status = 'pending' are victims
+    // of the old bad Migration 3 blanket reset. Recover them by
+    // setting status = 'finalized' and backfilling finalized_at.
+    // This runs only if any such rows exist, so it is safe on every start.
+    const stuckRows = await query(
+      `SELECT COUNT(*) AS cnt FROM kpis WHERE final_score > 0 AND status = 'pending'`
+    );
+    if (stuckRows[0]?.cnt > 0) {
+      console.log(`[migration] Recovering ${stuckRows[0].cnt} stuck-pending rows with final_score > 0...`);
+      await query(
+        `UPDATE kpis
+         SET status       = 'finalized',
+             finalized_at = COALESCE(finalized_at, updated_at, NOW())
+         WHERE final_score > 0 AND status = 'pending'`
+      );
+      console.log('[migration] Recovery complete.');
+    }
+
     // ── Migration 4: convert lead_score / final_score from GENERATED
     //    to regular stored columns (if they are currently generated) ──
     const generatedCols = await query(
@@ -723,53 +742,54 @@ app.post('/api/manager/kpi/assign', verifyToken, requireManager, async (req, res
   const disc  = Number(discipline    ?? 0);
   const init  = Number(initiative    ?? 0);
   const auto  = Number(autoScore     ?? 0);
-  const final = Math.min(auto + comm + team + disc + init, 100);
-
-  // Determine status and whether to set finalized_at
-  const newStatus    = saveDraft ? 'draft' : 'finalized';
-  const finalizedAt  = saveDraft ? null : new Date();
+  const lead  = comm + team + disc + init;          // 0–20
+  const final = Math.min(auto + lead, 100);         // 0–100
 
   try {
     const existing = await query('SELECT id FROM kpis WHERE user_id = ?', [userId]);
+
     if (existing.length === 0) {
-      // New KPI row — never include final_score in INSERT if it is a generated column.
-      // We insert the component columns; MySQL computes final_score automatically.
-      // If final_score is NOT generated in this DB, we also set it explicitly.
+      // ── INSERT new row ──────────────────────────────────────
       if (saveDraft) {
         await query(
           `INSERT INTO kpis
-             (user_id, auto_score, communication, teamwork, discipline, initiative, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
-          [userId, auto, comm, team, disc, init]
+             (user_id, auto_score, communication, teamwork, discipline, initiative,
+              lead_score, final_score, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+          [userId, auto, comm, team, disc, init, lead, final]
         );
       } else {
         await query(
           `INSERT INTO kpis
-             (user_id, auto_score, communication, teamwork, discipline, initiative, status, finalized_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'finalized', NOW())`,
-          [userId, auto, comm, team, disc, init]
+             (user_id, auto_score, communication, teamwork, discipline, initiative,
+              lead_score, final_score, status, finalized_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'finalized', NOW())`,
+          [userId, auto, comm, team, disc, init, lead, final]
         );
       }
     } else {
-      // Update existing row — do NOT include final_score in SET (it is generated)
+      // ── UPDATE existing row ─────────────────────────────────
       if (saveDraft) {
         await query(
           `UPDATE kpis
            SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
+               lead_score=?, final_score=?,
                status='draft', updated_at=NOW()
            WHERE user_id=?`,
-          [auto, comm, team, disc, init, userId]
+          [auto, comm, team, disc, init, lead, final, userId]
         );
       } else {
         await query(
           `UPDATE kpis
            SET auto_score=?, communication=?, teamwork=?, discipline=?, initiative=?,
+               lead_score=?, final_score=?,
                status='finalized', finalized_at=NOW(), updated_at=NOW()
            WHERE user_id=?`,
-          [auto, comm, team, disc, init, userId]
+          [auto, comm, team, disc, init, lead, final, userId]
         );
       }
     }
+
     res.json({ message: saveDraft ? 'KPI saved as draft.' : 'KPI finalized.', finalScore: final });
   } catch (err) {
     console.error('manager/kpi/assign error:', err.message);
@@ -788,48 +808,56 @@ app.post('/api/manager/teamlead/evaluate', verifyToken, requireManager, async (r
   const team  = Number(teamwork      ?? 0);
   const disc  = Number(discipline    ?? 0);
   const init  = Number(initiative    ?? 0);
+  const lead  = comm + team + disc + init;          // 0–20
 
   try {
     // Fetch existing auto_score (if any) to preserve it
     const existing = await query('SELECT id, auto_score FROM kpis WHERE user_id=?', [teamLeadId]);
     const auto  = Number(existing[0]?.auto_score ?? 0);
-    const final = Math.min(auto + comm + team + disc + init, 100);
+    const final = Math.min(auto + lead, 100);       // 0–100
 
     if (existing.length === 0) {
+      // ── INSERT new row ──────────────────────────────────────
       if (saveDraft) {
         await query(
           `INSERT INTO kpis
-             (user_id, auto_score, communication, teamwork, discipline, initiative, status)
-           VALUES (?, 0, ?, ?, ?, ?, 'draft')`,
-          [teamLeadId, comm, team, disc, init]
+             (user_id, auto_score, communication, teamwork, discipline, initiative,
+              lead_score, final_score, status)
+           VALUES (?, 0, ?, ?, ?, ?, ?, ?, 'draft')`,
+          [teamLeadId, comm, team, disc, init, lead, final]
         );
       } else {
         await query(
           `INSERT INTO kpis
-             (user_id, auto_score, communication, teamwork, discipline, initiative, status, finalized_at)
-           VALUES (?, 0, ?, ?, ?, ?, 'finalized', NOW())`,
-          [teamLeadId, comm, team, disc, init]
+             (user_id, auto_score, communication, teamwork, discipline, initiative,
+              lead_score, final_score, status, finalized_at)
+           VALUES (?, 0, ?, ?, ?, ?, ?, ?, 'finalized', NOW())`,
+          [teamLeadId, comm, team, disc, init, lead, final]
         );
       }
     } else {
+      // ── UPDATE existing row ─────────────────────────────────
       if (saveDraft) {
         await query(
           `UPDATE kpis
            SET communication=?, teamwork=?, discipline=?, initiative=?,
+               lead_score=?, final_score=?,
                status='draft', updated_at=NOW()
            WHERE user_id=?`,
-          [comm, team, disc, init, teamLeadId]
+          [comm, team, disc, init, lead, final, teamLeadId]
         );
       } else {
         await query(
           `UPDATE kpis
            SET communication=?, teamwork=?, discipline=?, initiative=?,
+               lead_score=?, final_score=?,
                status='finalized', finalized_at=NOW(), updated_at=NOW()
            WHERE user_id=?`,
-          [comm, team, disc, init, teamLeadId]
+          [comm, team, disc, init, lead, final, teamLeadId]
         );
       }
     }
+
     res.json({ message: saveDraft ? 'Team Lead KPI saved as draft.' : 'Team Lead evaluated.', finalScore: final });
   } catch (err) {
     res.status(500).json({ message: err.message });
