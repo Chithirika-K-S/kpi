@@ -246,45 +246,20 @@ export default function MemberDashboard() {
 
           <div className="space-y-3">
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">
-                Communication
-              </span>
-
-              <span className="font-semibold text-slate-900">
-                {kpi.leadMetrics?.communication ?? 0}/5
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">
-                Teamwork
-              </span>
-
-              <span className="font-semibold text-slate-900">
-                {kpi.leadMetrics?.teamwork ?? 0}/5
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">
-                Discipline
-              </span>
-
-              <span className="font-semibold text-slate-900">
-                {kpi.leadMetrics?.discipline ?? 0}/5
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">
-                Initiative
-              </span>
-
-              <span className="font-semibold text-slate-900">
-                {kpi.leadMetrics?.initiative ?? 0}/5
-              </span>
-            </div>
+            {(kpi.leadMetricsArr && kpi.leadMetricsArr.length > 0
+              ? kpi.leadMetricsArr
+              : [
+                  { id: 1, name: 'Communication', score: kpi.leadMetrics?.communication ?? 0, max_score: 5 },
+                  { id: 2, name: 'Teamwork',       score: kpi.leadMetrics?.teamwork      ?? 0, max_score: 5 },
+                  { id: 3, name: 'Discipline',     score: kpi.leadMetrics?.discipline    ?? 0, max_score: 5 },
+                  { id: 4, name: 'Initiative',     score: kpi.leadMetrics?.initiative    ?? 0, max_score: 5 },
+                ]
+            ).map(m => (
+              <div key={m.id} className="flex items-center justify-between">
+                <span className="text-sm text-slate-700">{m.name}</span>
+                <span className="font-semibold text-slate-900">{m.score}/{m.max_score}</span>
+              </div>
+            ))}
 
           </div>
         </div>
