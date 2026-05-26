@@ -175,7 +175,7 @@ export default function MemberCard({ member, teamLeadId, onEvaluate, onUpdated }
             : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]"
         }`}
       >
-        {statusKey === "finalized" ? "View KPI" : "Assign KPI (20%)"}
+        {statusKey === "finalized" ? "Edit KPI" : "Assign KPI (20%)"}
       </button>
     </div>
   );

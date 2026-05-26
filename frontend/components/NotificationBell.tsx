@@ -17,6 +17,10 @@ export default function NotificationBell({ teamLeadId }: Props) {
     try {
       const res = await api.getNotifications(teamLeadId);
       setData(res);
+    } catch (err) {
+      // Table may not exist yet — fail silently, show empty state
+      console.warn("[NotificationBell] failed to load:", err);
+      setData({ notifications: [], unreadCount: 0 });
     } finally {
       setLoading(false);
     }

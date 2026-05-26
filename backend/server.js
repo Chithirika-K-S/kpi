@@ -64,11 +64,93 @@ async function runMigrations() {
     //   'finalized' → when TL clicks Finalize via POST /api/team/finalize-kpi
     //   'pending'   → default for new rows, or rows with no criteria entered
 
-    // ── Migration 3 (removed) ──────────────────────────────────────
-    // The old blanket reset that wiped status for rows with finalized_at IS NULL
-    // was destructive: Manager-assigned KPIs never got finalized_at set, so they
-    // were reset to 'pending' on every restart. Removed — status is now managed
-    // explicitly by each write path and is never reset automatically.
+    // ── Migration 2b: add tl_remarks column ───────────────────────
+    const tlRemarksCol = await query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpis' AND COLUMN_NAME = 'tl_remarks'`
+    );
+    if (tlRemarksCol.length === 0) {
+      console.log("[migration] Adding tl_remarks column to kpis table...");
+      await query(`ALTER TABLE kpis ADD COLUMN tl_remarks TEXT NULL DEFAULT NULL`);
+      console.log("[migration] tl_remarks column added.");
+    }
+
+    // ── Migration 5: create notifications table if missing ──────
+    await query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id         INT          NOT NULL AUTO_INCREMENT,
+        user_id    INT          NOT NULL,
+        message    TEXT         NOT NULL,
+        is_read    TINYINT(1)   NOT NULL DEFAULT 0,
+        created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+    console.log("[migration] notifications table ready.");
+
+    // ── Migration 6: create teams table if missing ──────────────
+    await query(`
+      CREATE TABLE IF NOT EXISTS teams (
+        id      INT          NOT NULL AUTO_INCREMENT,
+        name    VARCHAR(255) NOT NULL,
+        lead_id INT          NULL,
+        PRIMARY KEY (id),
+        FOREIGN KEY (lead_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `);
+    console.log("[migration] teams table ready.");
+
+    // ── Migration 7: add team_id to users if missing ────────────
+    const teamIdCol = await query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'team_id'`
+    );
+    if (teamIdCol.length === 0) {
+      console.log("[migration] Adding team_id column to users table...");
+      await query(`ALTER TABLE users ADD COLUMN team_id INT NULL`);
+      console.log("[migration] team_id column added.");
+    }
+
+    // ── Migration 3: REMOVED ────────────────────────────────────
+    // The old status-reset migration was incorrectly wiping 'draft'
+    // rows back to 'pending' on every server restart.
+    // Status is now managed exclusively by the API routes:
+    //   pending  → default / no scores entered yet
+    //   draft    → TL saved scores via POST /api/team/evaluation
+    //   finalized → TL finalized via POST /api/team/finalize-kpi
+    // No automatic reset runs here.
+
+    // ── Migration 4: convert lead_score / final_score from GENERATED
+    //    to regular stored columns (if they are currently generated) ──
+    const generatedCols = await query(
+      `SELECT COLUMN_NAME, EXTRA
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME   = 'kpis'
+         AND COLUMN_NAME  IN ('lead_score','final_score')
+         AND EXTRA LIKE '%GENERATED%'`
+    );
+    if (generatedCols.length > 0) {
+      console.log("[migration] Converting lead_score/final_score from GENERATED to regular columns...");
+      // Must drop generated columns and re-add as plain DECIMAL
+      const names = generatedCols.map(r => r.COLUMN_NAME);
+      if (names.includes('final_score')) {
+        await query(`ALTER TABLE kpis MODIFY COLUMN final_score DECIMAL(5,2) NOT NULL DEFAULT 0`);
+        console.log("[migration] final_score converted.");
+      }
+      if (names.includes('lead_score')) {
+        await query(`ALTER TABLE kpis MODIFY COLUMN lead_score DECIMAL(5,2) NOT NULL DEFAULT 0`);
+        console.log("[migration] lead_score converted.");
+      }
+      // Backfill correct values for existing rows
+      await query(
+        `UPDATE kpis
+         SET lead_score  = communication + teamwork + discipline + initiative,
+             final_score = auto_score + communication + teamwork + discipline + initiative`
+      );
+      console.log("[migration] lead_score/final_score backfilled.");
+    }
 
   } catch (err) {
     console.error("[migration] Failed:", err.message);
@@ -98,7 +180,19 @@ function verifyToken(req, res, next) {
 // HEALTH
 // ─────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
+  res.json({ status: "ok", version: "v2-with-logging" });
+});
+
+// Quick DB test – call /api/test-db?userId=X to see what's in the kpis row
+app.get("/api/test-db", async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ message: "Pass ?userId=X" });
+  try {
+    const rows = await query("SELECT id, user_id, status, communication, teamwork, discipline, initiative, lead_score, final_score, finalized_at FROM kpis WHERE user_id = ?", [userId]);
+    res.json({ rows });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────
@@ -157,10 +251,17 @@ app.get("/api/team/members", verifyToken, (req, res) => {
   const sql = `
     SELECT u.id, u.name, u.email, u.role, u.team_id,
            k.auto_score   AS system_score,
+           k.lead_score   AS tl_score,
            k.final_score,
            k.communication, k.teamwork, k.discipline, k.initiative,
-           (k.communication + k.teamwork + k.discipline + k.initiative) AS tl_score,
-           COALESCE(k.status, 'pending') AS kpi_status
+           COALESCE(k.status, 'pending') AS kpi_status,
+           4 AS total_criteria,
+           (
+             CASE WHEN COALESCE(k.communication,0) > 0 THEN 1 ELSE 0 END +
+             CASE WHEN COALESCE(k.teamwork,0)      > 0 THEN 1 ELSE 0 END +
+             CASE WHEN COALESCE(k.discipline,0)    > 0 THEN 1 ELSE 0 END +
+             CASE WHEN COALESCE(k.initiative,0)    > 0 THEN 1 ELSE 0 END
+           ) AS submitted_criteria
     FROM users u
     INNER JOIN teams t ON u.team_id = t.id
     LEFT  JOIN kpis  k ON k.user_id = u.id
@@ -265,13 +366,13 @@ app.post("/api/team/evaluation", verifyToken, async (req, res) => {
   }
 
   const { employeeId, evaluations } = req.body;
-  // evaluations: [{ criteriaId, score, comments }]
-  // Map criteriaId → column name (matches existing kpis table)
+  console.log("[evaluation] hit. employeeId=", employeeId, "evaluations=", JSON.stringify(evaluations));
+
   const colMap = { 1: "communication", 2: "teamwork", 3: "discipline", 4: "initiative" };
 
   try {
-    // Check if KPI row exists
     const existing = await query("SELECT id FROM kpis WHERE user_id = ?", [employeeId]);
+    console.log("[evaluation] existing rows:", existing.length);
 
     const updates = {};
     for (const ev of evaluations) {
@@ -279,30 +380,39 @@ app.post("/api/team/evaluation", verifyToken, async (req, res) => {
       if (col) updates[col] = ev.score;
     }
 
+    const comm = updates["communication"] ?? 0;
+    const team = updates["teamwork"]      ?? 0;
+    const disc = updates["discipline"]    ?? 0;
+    const init = updates["initiative"]    ?? 0;
+    console.log("[evaluation] scores: comm=", comm, "team=", team, "disc=", disc, "init=", init);
+
     if (existing.length === 0) {
-      // Insert new KPI row with draft status
+      console.log("[evaluation] INSERTing new row...");
       await query(
-        "INSERT INTO kpis (user_id, auto_score, communication, teamwork, discipline, initiative, status) VALUES (?, 0, ?, ?, ?, ?, 'draft')",
-        [
-          employeeId,
-          updates["communication"] ?? 0,
-          updates["teamwork"]      ?? 0,
-          updates["discipline"]    ?? 0,
-          updates["initiative"]    ?? 0,
-        ]
+        `INSERT INTO kpis
+           (user_id, auto_score, communication, teamwork, discipline, initiative,
+            lead_score, final_score, status)
+         VALUES (?, 0, ?, ?, ?, ?, ?, ?, 'draft')`,
+        [employeeId, comm, team, disc, init, comm+team+disc+init, comm+team+disc+init]
       );
+      console.log("[evaluation] INSERT done");
     } else {
-      // Update existing — keep status as 'draft' unless already finalized
-      const setClauses = Object.keys(updates).map((col) => `${col} = ?`).join(", ");
-      const values = [...Object.values(updates), employeeId];
-      await query(
-        `UPDATE kpis SET ${setClauses}, status = CASE WHEN status = 'finalized' THEN 'finalized' ELSE 'draft' END WHERE user_id = ?`,
-        values
+      console.log("[evaluation] UPDATing existing row...");
+      const result = await query(
+        `UPDATE kpis
+         SET communication = ?, teamwork = ?, discipline = ?, initiative = ?,
+             lead_score  = ? + ? + ? + ?,
+             final_score = auto_score + (? + ? + ? + ?),
+             status = 'draft', updated_at = NOW()
+         WHERE user_id = ?`,
+        [comm, team, disc, init, comm, team, disc, init, comm, team, disc, init, employeeId]
       );
+      console.log("[evaluation] UPDATE done. affectedRows=", result.affectedRows);
     }
 
     res.json({ message: "Evaluation saved as draft." });
   } catch (err) {
+    console.error("[evaluation] ERROR:", err.message);
     res.status(500).json({ message: err.message });
   }
 });
@@ -317,21 +427,46 @@ app.post("/api/team/finalize-kpi", verifyToken, async (req, res) => {
     return res.status(403).json({ message: "Access denied. Team Lead only." });
   }
 
-  const { employeeId } = req.body;
+  const { employeeId, tlRemarks } = req.body;
+  console.log("[finalize] hit. employeeId=", employeeId, "tlRemarks=", tlRemarks);
 
   try {
-    const rows = await query("SELECT id FROM kpis WHERE user_id = ?", [employeeId]);
-    if (rows.length === 0) {
-      return res.status(400).json({ message: "No KPI found for this employee." });
-    }
-
-    await query(
-      "UPDATE kpis SET status = 'finalized', finalized_at = NOW(), updated_at = NOW() WHERE user_id = ?",
+    const rows = await query(
+      "SELECT id FROM kpis WHERE user_id = ?",
       [employeeId]
     );
+    console.log("[finalize] kpi rows found:", rows.length);
 
-    res.json({ message: "KPI finalized." });
+    if (rows.length === 0) {
+      console.log("[finalize] No KPI row found - returning 400");
+      return res.status(400).json({ message: "No KPI found for this employee. Save scores first." });
+    }
+
+    console.log("[finalize] Running UPDATE...");
+    const result = await query(
+      `UPDATE kpis
+       SET status = 'finalized',
+           finalized_at = NOW(),
+           updated_at   = NOW(),
+           tl_remarks   = ?
+       WHERE user_id = ?`,
+      [tlRemarks ?? null, employeeId]
+    );
+    console.log("[finalize] UPDATE done. affectedRows=", result.affectedRows);
+
+    const updated = await query(
+      "SELECT status, lead_score, final_score FROM kpis WHERE user_id = ?",
+      [employeeId]
+    );
+    console.log("[finalize] After update, DB row:", JSON.stringify(updated[0]));
+
+    res.json({
+      message: "KPI finalized.",
+      leadScore:  updated[0]?.lead_score  ?? 0,
+      finalScore: updated[0]?.final_score ?? 0,
+    });
   } catch (err) {
+    console.error("[finalize] ERROR:", err.message);
     res.status(500).json({ message: err.message });
   }
 });
