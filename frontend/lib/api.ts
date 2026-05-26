@@ -110,6 +110,79 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // ─── Admin – Stats ────────────────────────────────────────────
+  getAdminStats: () =>
+    apiFetch<AdminStats>('/api/admin/stats'),
+
+  // ─── Admin – Metrics ──────────────────────────────────────────
+  getAdminMetrics: () =>
+    apiFetch<{ metrics: AdminMetric[] }>('/api/admin/metrics'),
+
+  createAdminMetric: (payload: { metric_name: string; max_score: number }) =>
+    apiFetch<{ metric: AdminMetric }>('/api/admin/metrics', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAdminMetric: (id: number, payload: { metric_name: string; max_score: number; is_active: number }) =>
+    apiFetch<{ metric: AdminMetric }>(`/api/admin/metrics/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAdminMetric: (id: number) =>
+    apiFetch<{ message: string }>(`/api/admin/metrics/${id}`, { method: 'DELETE' }),
+
+  // ─── Admin – Users ────────────────────────────────────────────
+  getAdminUsers: () =>
+    apiFetch<{ users: AdminUser[] }>('/api/admin/users'),
+
+  createAdminUser: (payload: { name: string; email: string; password: string; role: string; team_id?: number | null }) =>
+    apiFetch<{ user: AdminUser }>('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAdminUser: (id: number, payload: { name: string; email: string; role: string; team_id?: number | null }) =>
+    apiFetch<{ message: string }>(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  setAdminUserStatus: (id: number, status: 'Active' | 'Inactive') =>
+    apiFetch<{ message: string }>(`/api/admin/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+
+  deleteAdminUser: (id: number) =>
+    apiFetch<{ message: string }>(`/api/admin/users/${id}`, { method: 'DELETE' }),
+
+  // ─── Admin – Teams ────────────────────────────────────────────
+  getAdminTeams: () =>
+    apiFetch<{ teams: AdminTeam[] }>('/api/admin/teams'),
+
+  createAdminTeam: (payload: { name: string; lead_id?: number | null }) =>
+    apiFetch<{ message: string; id: number }>('/api/admin/teams', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAdminTeam: (id: number, payload: { name: string; lead_id?: number | null }) =>
+    apiFetch<{ message: string }>(`/api/admin/teams/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAdminTeam: (id: number) =>
+    apiFetch<{ message: string }>(`/api/admin/teams/${id}`, { method: 'DELETE' }),
+
+  setAdminTeamStatus: (id: number, status: 'Active' | 'Inactive') =>
+    apiFetch<{ message: string; membersUpdated: number }>(`/api/admin/teams/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+
   // ─── Notifications ────────────────────────────────────────────
   getNotifications: (tlId: number) =>
     apiFetch<any>(`/api/notifications/${tlId}`),
@@ -123,9 +196,7 @@ export const api = {
 };
 
 
-// ─── Named exports so `import * as api` resolves each function ──────────────
-// EvalModal, MemberCard, NotificationBell all use:  import * as api from "@/lib/api"
-// They then call e.g. api.finalizeKPI(...)  — these named exports satisfy that.
+// ─── Named exports ──────────────────────────────────────────────────────────
 export const getMe                    = api.getMe;
 export const getKpi                   = api.getKpi;
 export const sendChat                 = api.sendChat;
@@ -156,6 +227,7 @@ export interface KPI {
     discipline: number;
     initiative: number;
   };
+  leadMetricsArr?: { id: number; name: string; score: number; max_score: number }[];
   leadScore: number;
   finalScore: number;
 }
@@ -249,4 +321,47 @@ export interface EvaluateLeadPayload {
   discipline: number;
   initiative: number;
   saveDraft?: boolean;
+}
+
+// ─── Admin types ────────────────────────────────────────────────
+
+export interface AdminStats {
+  totalMembers: number;
+  totalLeads: number;
+  totalManagers: number;
+  totalAdmins: number;
+  totalTeams: number;
+  activeMetrics: number;
+}
+
+export interface AdminMetric {
+  id: number;
+  metric_name: string;
+  max_score: number;
+  is_active: number;
+  created_at: string;
+}
+
+// FIX: team_id is now a first-class typed field (was missing before,
+// causing the Edit modal to open with team_id = undefined and the
+// Team dropdown to appear empty).
+export interface AdminUser {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  team_id: number | null;   // ← explicitly typed; backend now SELECTs u.team_id
+  team_name: string | null;
+  created_at: string;
+}
+
+export interface AdminTeam {
+  id: number;
+  name: string;
+  status: 'Active' | 'Inactive';
+  lead_id: number | null;
+  lead_name: string | null;
+  member_count: number;
+  created_at?: string;
 }
