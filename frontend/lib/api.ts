@@ -98,6 +98,9 @@ export const api = {
   getManagerTeams: () =>
     apiFetch<{ teams: TeamOption[] }>('/api/manager/teams'),
 
+  getManagerKpiMetrics: () =>
+    apiFetch<{ metrics: KpiMetric[] }>('/api/manager/kpi-metrics'),
+
   managerAssignKpi: (payload: ManagerKpiPayload) =>
     apiFetch<{ message: string; finalScore: number }>('/api/manager/kpi/assign', {
       method: 'POST',
@@ -303,23 +306,23 @@ export interface TeamOption {
   member_count: number;
 }
 
+export interface KpiMetric {
+  id: number;
+  metric_name: string;
+  max_score: number;
+}
+
 export interface ManagerKpiPayload {
   userId: number;
   autoScore: number;
-  communication: number;
-  teamwork: number;
-  discipline: number;
-  initiative: number;
-  saveDraft: boolean;   // true = save as draft, false = finalize
+  metricScores: { metricId: number; score: number }[];
+  saveDraft: boolean;
 }
 
 export interface EvaluateLeadPayload {
   teamLeadId: number;
-  communication: number;
-  teamwork: number;
-  discipline: number;
-  initiative: number;
-  saveDraft: boolean;   // true = save as draft, false = finalize
+  metricScores: { metricId: number; score: number }[];
+  saveDraft: boolean;
 }
 
 // ─── Admin types ────────────────────────────────────────────────
