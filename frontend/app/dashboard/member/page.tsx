@@ -272,7 +272,7 @@ export default function MemberDashboard() {
         {/* ── AI Chat tab ───────────────────────────────────────── */}
         {tab === 'chat' && (
           <section className="h-[600px]">
-            <ChatBot />
+            <ChatBot role="member" />
           </section>
         )}
       </main>

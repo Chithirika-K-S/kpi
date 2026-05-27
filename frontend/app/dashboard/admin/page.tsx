@@ -10,7 +10,7 @@ type Team = AdminTeam;
 type Stats = AdminStats;
 
 type Tab = 'overview' | 'metrics' | 'users' | 'teams';
-const ROLES = ['Team Member', 'Team Lead', 'Manager', 'Admin'] as const;
+const ROLES = ['Team Member', 'Team Lead', 'Manager'] as const;
 
 // ── Small helpers ─────────────────────────────────────────────────
 function Badge({ label, color }: { label: string; color: string }) {
@@ -136,7 +136,7 @@ export default function AdminDashboard() {
 
   // ── Filtered lists ────────────────────────────────────────────
   const filteredUsers = useMemo(() => users.filter(u => {
-    if (u.id === user?.id) return false; // hide the logged-in admin's own row
+    if (u.role === 'Admin') return false; // hide all admins from the user list
     const q = userSearch.toLowerCase();
     const matchQ = u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
     const matchR = userRole === 'All' || u.role === userRole;

@@ -30,6 +30,10 @@ export const api = {
   getKpi: () =>
     apiFetch<{ kpi: KPI }>('/api/kpi'),
 
+  // ─── KPI (Team Lead – own KPI evaluated by Manager) ────────
+  getTlKpi: () =>
+    apiFetch<{ kpi: TlKPI | null }>('/api/team/my-kpi'),
+
   // ─── AI Chat ─────────────────────────────────────────────────
   sendChat: (message: string, history: ChatMessage[]) =>
     apiFetch<{ reply: string }>('/api/chat', {
@@ -233,6 +237,15 @@ export interface KPI {
   leadMetricsArr?: { id: number; name: string; score: number; max_score: number }[];
   leadScore: number;
   finalScore: number;
+}
+
+export interface TlKPI {
+  autoScore:       number;
+  manualScore:     number;
+  finalScore:      number;
+  status:          'pending' | 'draft' | 'finalized';
+  finalized_at:    string | null;
+  metricBreakdown: { id: number; name: string; score: number; max_score: number }[];
 }
 
 export interface ChatMessage {

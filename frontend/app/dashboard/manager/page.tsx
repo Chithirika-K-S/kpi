@@ -818,7 +818,7 @@ export default function ManagerDashboard() {
         {/* ══ AI ASSISTANT TAB ════════════════════════════════ */}
         {tab === 'chat' && (
           <section className="h-[600px]">
-            <ChatBot />
+            <ChatBot role="manager" />
           </section>
         )}
 
