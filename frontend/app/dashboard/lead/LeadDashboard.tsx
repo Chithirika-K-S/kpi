@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, RefreshCw } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, TlKPI } from "@/lib/api";
 import NotificationBell from "@/components/NotificationBell";
 import StatBar from "@/components/StatBar";
 import EvalModal from "@/components/EvalModal";
@@ -11,7 +11,50 @@ import MemberCard from "@/components/MemberCard";
 import ChatBot from "@/components/dashboard/ChatBot";
 
 type Filter = "all" | "pending" | "draft" | "finalized";
-type Tab = "team" | "chat";
+type Tab = "team" | "mykpi" | "chat";
+
+// ─── Status pill ────────────────────────────────────────────────────────────────────────────
+function KpiStatusPill({ status }: { status: string }) {
+  const s = (status ?? "").toLowerCase();
+  const cfg =
+    s === "finalized"
+      ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: "✅", label: "Finalized" }
+      : s === "draft"
+      ? { cls: "bg-amber-50  text-amber-700  border-amber-200",   icon: "⏳", label: "Draft"     }
+      : { cls: "bg-slate-50  text-slate-500  border-slate-200",   icon: "⏳", label: "Pending"   };
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border ${cfg.cls}`}>
+      {cfg.icon} {cfg.label}
+    </span>
+  );
+}
+
+// ─── Score ring ────────────────────────────────────────────────────────────────────────────
+function ScoreCircle({ score, max, label, color }: { score: number; max: number; label: string; color: string }) {
+  const pct = Math.min(100, Math.round((score / max) * 100));
+  const r = 30, cx = 40, cy = 40;
+  const circ = 2 * Math.PI * r;
+  const dash = (pct / 100) * circ;
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <svg width={80} height={80} viewBox="0 0 80 80">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth={8} />
+        <circle
+          cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={8}
+          strokeDasharray={`${dash} ${circ}`}
+          strokeLinecap="round"
+          transform="rotate(-90 40 40)"
+        />
+        <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={15} fontWeight={700} fill="#1e293b">
+          {score}
+        </text>
+      </svg>
+      <span className="text-[11px] text-slate-500 font-medium">{label}<br />
+        <span className="text-[10px] text-slate-400">out of {max}</span>
+      </span>
+    </div>
+  );
+}
 
 export default function LeadDashboard() {
   const router = useRouter();
@@ -21,6 +64,8 @@ export default function LeadDashboard() {
   const [tlName,    setTlName]    = useState<string>("");
 
   const [members,  setMembers]  = useState<any[]>([]);
+  const [tlKpi,    setTlKpi]    = useState<TlKPI | null>(null);
+  const [tlKpiLoading, setTlKpiLoading] = useState(true);
   const [periodId, setPeriodId] = useState<number | undefined>();
   const [search,   setSearch]   = useState("");
   const [filter,   setFilter]   = useState<Filter>("all");
@@ -67,9 +112,24 @@ export default function LeadDashboard() {
   };
 
   useEffect(() => {
-    if (authReady) loadMembers();
+    if (authReady) {
+      loadMembers();
+      loadTlKpi();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady]);
+
+  const loadTlKpi = async () => {
+    setTlKpiLoading(true);
+    try {
+      const res = await api.getTlKpi();
+      setTlKpi(res.kpi);
+    } catch (err) {
+      console.error("Failed to load TL KPI:", err);
+    } finally {
+      setTlKpiLoading(false);
+    }
+  };
 
   /* ── Logout ─────────────────────────────────────────────────── */
   const logout = () => {
@@ -165,6 +225,14 @@ export default function LeadDashboard() {
             👥 My Team
           </button>
           <button
+            onClick={() => setTab("mykpi")}
+            className={`px-5 py-1.5 rounded-lg text-sm font-medium transition ${
+              tab === "mykpi" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            🏆 My KPI
+          </button>
+          <button
             onClick={() => setTab("chat")}
             className={`px-5 py-1.5 rounded-lg text-sm font-medium transition ${
               tab === "chat" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
@@ -245,9 +313,100 @@ export default function LeadDashboard() {
         )}
 
         {/* ══ AI ASSISTANT TAB ══════════════════════════════════ */}
+        {/* ══ MY KPI TAB ═══════════════════════════════════════════════════ */}
+        {tab === "mykpi" && (
+          <section>
+            {tlKpiLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+              </div>
+            ) : !tlKpi ? (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-14 text-center shadow-sm">
+                <div className="text-4xl mb-3">📊</div>
+                <h3 className="text-base font-semibold text-slate-800 mb-1">KPI Not Yet Evaluated</h3>
+                <p className="text-sm text-slate-500">
+                  Your KPI hasn’t been evaluated by the Manager yet. Check back later.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+
+                {/* Header card */}
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl px-6 py-5 flex items-center justify-between shadow-md overflow-hidden relative">
+                  <div className="absolute -top-8 -right-8 w-40 h-40 bg-white/10 rounded-full" />
+                  <div className="absolute -bottom-10 -right-20 w-52 h-52 bg-white/5 rounded-full" />
+                  <div className="relative">
+                    <p className="text-blue-200 text-xs font-medium uppercase tracking-wider mb-1">My KPI — Evaluated by Manager</p>
+                    <h2 className="text-xl font-bold text-white">{tlName}</h2>
+                    <div className="mt-2">
+                      <KpiStatusPill status={tlKpi.status} />
+                    </div>
+                    {tlKpi.finalized_at && (
+                      <p className="text-blue-200 text-xs mt-1">
+                        Finalized on {new Date(tlKpi.finalized_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                      </p>
+                    )}
+                  </div>
+                  <div className="hidden md:flex flex-col items-center bg-white/20 backdrop-blur-sm rounded-xl px-6 py-4 text-white relative">
+                    <span className="text-4xl font-extrabold">{tlKpi.finalScore}</span>
+                    <span className="text-xs text-blue-200 mt-0.5">Final KPI / 100</span>
+                  </div>
+                </div>
+
+                {/* Score circles */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col items-center gap-3">
+                    <ScoreCircle score={tlKpi.autoScore} max={80} label="System Score" color="#6366f1" />
+                    <p className="text-xs text-slate-400 text-center">Auto-generated performance score</p>
+                  </div>
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col items-center gap-3">
+                    <ScoreCircle
+                      score={tlKpi.manualScore}
+                      max={tlKpi.metricBreakdown.reduce((s, m) => s + m.max_score, 0) || 20}
+                      label="Manager Score"
+                      color="#10b981"
+                    />
+                    <p className="text-xs text-slate-400 text-center">Evaluated by your Manager</p>
+                  </div>
+                  <div className="bg-white rounded-2xl border border-indigo-200 shadow-sm p-5 flex flex-col items-center gap-3">
+                    <ScoreCircle score={tlKpi.finalScore} max={100} label="Final KPI" color="#3b82f6" />
+                    <p className="text-xs text-slate-400 text-center">System + Manager combined</p>
+                  </div>
+                </div>
+
+                {/* Metric breakdown */}
+                {tlKpi.metricBreakdown.length > 0 && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                    <h3 className="text-sm font-semibold text-slate-800 mb-4">Manager Evaluation — Metric Breakdown</h3>
+                    <div className="space-y-4">
+                      {tlKpi.metricBreakdown.map((m) => {
+                        const pct = Math.min(100, Math.round((m.score / m.max_score) * 100));
+                        const barColor = pct >= 80 ? "bg-emerald-500" : pct >= 50 ? "bg-blue-500" : "bg-rose-400";
+                        return (
+                          <div key={m.id}>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-sm text-slate-700 font-medium">{m.name}</span>
+                              <span className="text-sm font-bold text-slate-800">
+                                {m.score}<span className="text-slate-400 font-normal">/{m.max_score}</span>
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-2.5">
+                              <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {tab === "chat" && (
           <section className="h-[600px]">
-            <ChatBot />
+            <ChatBot role="lead" />
           </section>
         )}
       </main>

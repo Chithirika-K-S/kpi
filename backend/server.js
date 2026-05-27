@@ -424,6 +424,43 @@ app.patch("/api/notifications/:tlId/read-all", verifyToken, (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// KPI – Team Lead: view own KPI (evaluated by Manager)
+// ─────────────────────────────────────────────
+app.get("/api/team/my-kpi", verifyToken, async (req, res) => {
+  if (req.user.role !== "Team Lead") return res.status(403).json({ message: "Team Lead only." });
+  try {
+    const rows = await query(
+      "SELECT * FROM kpis WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+      [req.user.id]
+    );
+    if (!rows[0]) return res.json({ kpi: null });
+    const k = rows[0];
+    const dynamicMetrics = await query(
+      "SELECT * FROM kpi_metrics WHERE is_active = 1 ORDER BY id ASC"
+    );
+    const knownCols = ["communication", "teamwork", "discipline", "initiative"];
+    const metricBreakdown = dynamicMetrics.map((m) => {
+      const col = m.metric_name.toLowerCase().replace(/\s+/g, "_");
+      const score = knownCols.includes(col) ? (k[col] ?? 0) : 0;
+      return { id: m.id, name: m.metric_name, score, max_score: m.max_score };
+    });
+    const manualScore = metricBreakdown.reduce((s, m) => s + m.score, 0);
+    res.json({
+      kpi: {
+        autoScore:       k.auto_score  ?? 0,
+        manualScore,
+        finalScore:      k.final_score ?? 0,
+        status:          k.status      ?? "pending",
+        finalized_at:    k.finalized_at ?? null,
+        metricBreakdown,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // KPI (Team Member – view own KPI)
 // ─────────────────────────────────────────────
 app.get("/api/kpi", verifyToken, (req, res) => {

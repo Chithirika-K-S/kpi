@@ -3,11 +3,54 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
 import { api, ChatMessage } from '@/lib/api';
 
-export default function ChatBot() {
-  const [messages, setMessages]   = useState<ChatMessage[]>([]);
-  const [input,    setInput]      = useState('');
-  const [loading,  setLoading]    = useState(false);
-  const [error,    setError]      = useState('');
+// ─── Role-based config ───────────────────────────────────────────
+type UserRole = 'member' | 'lead' | 'manager';
+
+interface RoleConfig {
+  greeting: string;
+  subtitle: string;
+  chips: string[];
+}
+
+const ROLE_CONFIG: Record<UserRole, RoleConfig> = {
+  member: {
+    greeting: "👋 Hi! I'm your personal KPI assistant. I can see your current scores, metrics and deadlines — let me help you improve!",
+    subtitle: 'Here are some things I can help you with:',
+    chips: [
+      'How am I doing this month?',
+      'Which KPI should I focus on?',
+      'How can I improve my score?',
+      'What are my weakest areas?',
+    ],
+  },
+  lead: {
+    greeting: "👋 Hi! I'm your Team Lead assistant. I can help you review scores, track evaluations and manage your team's performance.",
+    subtitle: 'What would you like to check?',
+    chips: [
+      'Show me the team scores',
+      'Who has a pending evaluation?',
+      'Check a member\'s performance',
+      'Show finalized KPIs',
+    ],
+  },
+  manager: {
+    greeting: "👋 Hi! I'm your Manager assistant. I have visibility across all teams and team leads — just ask!",
+    subtitle: 'What would you like to explore?',
+    chips: [
+      'Check a team lead\'s performance',
+      'Show team member stats',
+      'Which team is performing best?',
+      'Show pending KPI reviews',
+    ],
+  },
+};
+
+export default function ChatBot({ role = 'member' }: { role?: UserRole }) {
+  const config = ROLE_CONFIG[role];
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
 
@@ -65,16 +108,46 @@ export default function ChatBot() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
 
-        {/* Welcome message */}
+        {/* Welcome message — role-aware */}
         {messages.length === 0 && !loading && (
           <div className="flex gap-3">
             <Avatar role="assistant" />
-            <div className="max-w-[80%]">
+            <div className="max-w-[85%] space-y-3">
               <Bubble role="assistant">
-                👋 Hi! I&apos;m your KPI assistant. I already know your current KPIs, progress and deadlines. Ask me anything!
-                <br /><br />
-                <span className="text-slate-500 text-xs">Try: &quot;How am I doing on my KPIs?&quot; or &quot;What should I focus on this week?&quot;</span>
+                {config.greeting}
+                <p className="mt-2 text-xs text-slate-500">{config.subtitle}</p>
               </Bubble>
+              {/* Quick-action chips */}
+              <div className="flex flex-wrap gap-2 pl-1">
+                {config.chips.map(chip => (
+                  <button
+                    key={chip}
+                    onClick={() => {
+                      setInput(chip);
+                      setTimeout(() => {
+                        // auto-send after a tick so state is flushed
+                        setMessages(prev => {
+                          const userMsg: ChatMessage = { role: 'user', content: chip };
+                          setInput('');
+                          setLoading(true);
+                          api.sendChat(chip, [...prev, userMsg])
+                            .then(({ reply }) =>
+                              setMessages(p => [...p, { role: 'assistant', content: reply }])
+                            )
+                            .catch(e =>
+                              setError(e instanceof Error ? e.message : 'Something went wrong.')
+                            )
+                            .finally(() => setLoading(false));
+                          return [...prev, userMsg];
+                        });
+                      }, 0);
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition font-medium"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
