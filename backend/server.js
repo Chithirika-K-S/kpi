@@ -445,6 +445,8 @@ app.get("/api/kpi", verifyToken, (req, res) => {
         autoScore:   row.auto_score  ?? 0,
         leadScore,
         finalScore:  row.final_score ?? 0,
+        status:      row.status      ?? 'Pending',
+        month:       row.evaluation_month ?? null,
         leadMetrics: {
           communication: row.communication ?? 0,
           teamwork:      row.teamwork      ?? 0,
@@ -455,6 +457,43 @@ app.get("/api/kpi", verifyToken, (req, res) => {
       },
     });
   });
+});
+
+// ─────────────────────────────────────────────
+// KPI HISTORY  (Team Member – last 12 months)
+// ─────────────────────────────────────────────
+app.get("/api/kpi/history", verifyToken, async (req, res) => {
+  try {
+    // Return all rows for the user ordered by evaluation_month (or created_at as fallback)
+    // so the member can see up to 13 months (12 past + current)
+    const rows = await query(`
+      SELECT
+        id,
+        COALESCE(
+          DATE_FORMAT(evaluation_month, '%b %Y'),
+          DATE_FORMAT(created_at,       '%b %Y')
+        )                          AS month_label,
+        COALESCE(
+          DATE_FORMAT(evaluation_month, '%Y-%m'),
+          DATE_FORMAT(created_at,       '%Y-%m')
+        )                          AS month_key,
+        auto_score,
+        lead_score,
+        final_score,
+        status,
+        evaluation_month,
+        updated_at
+      FROM kpis
+      WHERE user_id = ?
+      ORDER BY
+        COALESCE(evaluation_month, created_at) ASC
+      LIMIT 13
+    `, [req.user.id]);
+    res.json({ history: rows });
+  } catch (err) {
+    console.error('kpi/history error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────
