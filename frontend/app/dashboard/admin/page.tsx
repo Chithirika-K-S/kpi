@@ -136,11 +136,12 @@ export default function AdminDashboard() {
 
   // ── Filtered lists ────────────────────────────────────────────
   const filteredUsers = useMemo(() => users.filter(u => {
+    if (u.id === user?.id) return false; // hide the logged-in admin's own row
     const q = userSearch.toLowerCase();
     const matchQ = u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
     const matchR = userRole === 'All' || u.role === userRole;
     return matchQ && matchR;
-  }), [users, userSearch, userRole]);
+  }), [users, userSearch, userRole, user]);
 
   const filteredTeams = useMemo(() => teams.filter(t => {
     const matchName = t.name.toLowerCase().includes(teamSearch.toLowerCase());
@@ -396,7 +397,6 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {metrics.map((m, i) => {
-                    // Active button is locked (greyed, no click) when active count is exactly 4 or fewer
                     const canDeactivate = activeMetricCount > 4;
                     return (
                       <tr key={m.id} className="hover:bg-slate-50/60 transition">
@@ -407,7 +407,6 @@ export default function AdminDashboard() {
                         </td>
                         <td className="px-4 py-3 text-center">
                           {m.is_active ? (
-                            // Active metric: clickable only if canDeactivate, else show locked tooltip
                             <button
                               onClick={() => canDeactivate ? toggleMetric(m) : alert('Add more than 4 active metrics before deactivating one.')}
                               title={canDeactivate ? 'Click to deactivate' : 'Need more than 4 active metrics to deactivate'}
@@ -419,7 +418,6 @@ export default function AdminDashboard() {
                               Active {!canDeactivate && '🔒'}
                             </button>
                           ) : (
-                            // Inactive metric: always clickable to re-activate
                             <button
                               onClick={() => toggleMetric(m)}
                               title="Click to activate"
@@ -485,7 +483,6 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {filteredUsers.map(u => {
-                    // Safely extract team_id — it exists on the API response but isn't in the TS type
                     const teamId: number | null = (u as any).team_id ?? null;
                     return (
                       <tr key={u.id} className={`hover:bg-slate-50/60 transition ${u.status === 'Inactive' ? 'opacity-60' : ''}`}>

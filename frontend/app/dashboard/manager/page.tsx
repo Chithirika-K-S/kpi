@@ -6,9 +6,10 @@ import {
   api, User, ManagerStats, MonthlyKpi, TeamKpi,
   EmployeeRow, TeamLeadRow, TeamOption, KpiMetric
 } from '@/lib/api';
+import ChatBot from '@/components/dashboard/ChatBot';
 
 // ─── Types ────────────────────────────────────────────────────────
-type Tab = 'analytics' | 'employees' | 'teamleads';
+type Tab = 'analytics' | 'employees' | 'teamleads' | 'chat';
 type StatusFilter = 'All' | 'Finalized' | 'Draft' | 'Pending';
 
 // ─── Tiny inline LINE chart (pure SVG) ───────────────────────────
@@ -321,7 +322,6 @@ export default function ManagerDashboard() {
   const [chartData,     setChartData]     = useState<MonthlyKpi[]>([]);
 
   // ── modals ────────────────────────────────────────
-  // kpiModal drives the unified KpiModal for both employees and team leads
   const [kpiModal,   setKpiModal]   = useState<{ person: EmployeeRow | TeamLeadRow; mode: 'evaluate' | 'edit' } | null>(null);
   const [kpiMetrics, setKpiMetrics] = useState<KpiMetric[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
@@ -476,11 +476,12 @@ export default function ManagerDashboard() {
         </div>
 
         {/* ── Tabs ──────────────────────────────────────────── */}
-        <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+        <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit flex-wrap">
           {([
             { key: 'analytics',  label: '📊 Analytics'   },
             { key: 'employees',  label: '👥 Employees'   },
             { key: 'teamleads',  label: '🧑‍💼 Team Leads' },
+            { key: 'chat',       label: '🤖 AI Assistant' },
           ] as { key: Tab; label: string }[]).map(t => (
             <button
               key={t.key}
@@ -811,6 +812,13 @@ export default function ManagerDashboard() {
                 <p className="text-slate-400 text-sm col-span-3 text-center py-10">No team leads found.</p>
               )}
             </div>
+          </section>
+        )}
+
+        {/* ══ AI ASSISTANT TAB ════════════════════════════════ */}
+        {tab === 'chat' && (
+          <section className="h-[600px]">
+            <ChatBot />
           </section>
         )}
 
